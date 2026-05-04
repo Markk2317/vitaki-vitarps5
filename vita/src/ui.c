@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <time.h>
 #include <vita2d.h>
 #include <psp2/ctrl.h>
 #include <psp2/touch.h>
@@ -46,6 +47,8 @@
 #include "ui.h"
 #include "util.h"
 #include "video.h"
+#include "psn_auth.h"
+#include "psn_remote.h"
 #include "ui/ui_graphics.h"
 #include "ui/ui_animation.h"
 #include "ui/ui_input.h"
@@ -457,6 +460,25 @@ void draw_ui() {
   context.ui_state.register_host_modal_pushed = false;
 
   load_psn_id_if_needed();
+  time_t startup_t = time(NULL);
+  uint64_t startup_unix = 0;
+  if (startup_t != (time_t)-1) {
+    startup_unix = (uint64_t)startup_t;
+    /* psn_remote_refresh_hosts() refreshes the OAuth token, fetches the PSN
+     * device list, and persists the config. It is a no-op when PSN internet
+     * mode is disabled. Doing this at startup means the user does not have to
+     * navigate to Profile -> Connection card and press X to see their PS5/PS4. */
+    psn_remote_refresh_hosts();
+    /* Drain any token refresh that happened but didn't persist (e.g. host
+     * fetch failed after a successful token refresh). */
+    if (context.config_persist_pending) {
+      if (!config_serialize(&context.config))
+        CHIAKI_LOGW(&(context.log), "PSN auth: failed to persist refreshed token at startup");
+      context.config_persist_pending = false;
+    }
+  } else {
+    CHIAKI_LOGW(&(context.log), "PSN auth: skipping startup host refresh — system clock not set");
+  }
 
   /*
    * Glyph atlas warm-up flag: set once here so the first main-loop iteration
@@ -472,6 +494,33 @@ void draw_ui() {
     // Must run BEFORE input processing to prevent reconnect races
     if (context.stream.session_finalize_pending) {
       host_finalize_deferred_session();
+    }
+
+    /* Drain any pending config persist on every idle frame. config_persist_pending
+     * can be set by any refresh path (startup, idle timer, pre-stream token check),
+     * so draining it here — outside the 60s gate — ensures a power-cycle right after
+     * any refresh still saves the new token. */
+    if (!context.stream.is_streaming && context.config_persist_pending) {
+      if (!config_serialize(&context.config))
+        CHIAKI_LOGW(&(context.log), "PSN auth: failed to persist refreshed token");
+      context.config_persist_pending = false;
+    }
+
+    /* Proactively refresh PSN token once per minute while idle so it never
+     * expires unnoticed between user actions. Skip during streaming to avoid
+     * network contention with the media path. */
+    if (!context.stream.is_streaming) {
+      static uint64_t last_token_check_unix = 0;
+      time_t t = time(NULL);
+      if (t != (time_t)-1) {
+        uint64_t now_unix = (uint64_t)t;
+        if (last_token_check_unix == 0)
+          last_token_check_unix = startup_unix;
+        if (now_unix - last_token_check_unix >= 60) {
+          last_token_check_unix = now_unix;
+          psn_auth_refresh_token_if_needed(now_unix, false);
+        }
+      }
     }
 
     // Always read controller input - input thread uses Ext2 variant to access controller
