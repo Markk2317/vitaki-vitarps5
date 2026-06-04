@@ -545,7 +545,7 @@ void draw_ui() {
 
     /* ── Immediate token refresh on WiFi reconnect ─────────────────────
      *
-     * sceNetCtlGetState() is a fast, non-blocking kernel call.  We poll
+     * sceNetCtlInetGetState() is a fast, non-blocking kernel call.  We poll
      * it every frame (negligible cost) and watch for the edge:
      *   prev_state != CONNECTED  →  cur_state == CONNECTED
      *
@@ -560,7 +560,7 @@ void draw_ui() {
     if (!context.stream.is_streaming) {
       static int prev_net_ctl_state = -1;
       int cur_net_ctl_state = -1;
-      if (sceNetCtlGetState(&cur_net_ctl_state) >= 0) {
+      if (sceNetCtlInetGetState(&cur_net_ctl_state) >= 0) {
         if (prev_net_ctl_state >= 0 &&
             prev_net_ctl_state != 3 /* SCE_NETCTL_STATE_CONNECTED */ &&
             cur_net_ctl_state  == 3) {
