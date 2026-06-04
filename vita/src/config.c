@@ -35,6 +35,7 @@ static void config_set_defaults(VitaChiakiConfig *cfg, bool circle_btn_confirm_d
   cfg->psn_oauth_client_secret = NULL;
   cfg->psn_oauth_scope = NULL;
   cfg->psn_oauth_redirect_uri = NULL;
+  cfg->psn_oauth_npsso = NULL;
   cfg->psn_client_duid = NULL;
   cfg->psn_remoteplay_enabled = false;
   cfg->auto_discovery = true;
@@ -283,6 +284,8 @@ static void parse_basic_settings(VitaChiakiConfig *cfg, toml_table_t *settings,
       settings, "psn_oauth_access_token_enc", &cfg->psn_oauth_access_token, "access");
   TokenLoadResult refresh_enc_result = load_token_from_encrypted(
       settings, "psn_oauth_refresh_token_enc", &cfg->psn_oauth_refresh_token, "refresh");
+      config_load_encrypted_token(
+          settings, "psn_oauth_npsso_enc", &cfg->psn_oauth_npsso, "npsso");
 
   if (access_enc_result == TOKEN_LOAD_ABSENT) {
     /* _enc key not present — fall back to legacy plaintext key for migration. */
@@ -492,6 +495,8 @@ void config_free(VitaChiakiConfig *cfg) {
   free(cfg->psn_oauth_client_secret);
   free(cfg->psn_oauth_scope);
   free(cfg->psn_oauth_redirect_uri);
+  free(cfg->psn_oauth_npsso);
+  cfg->psn_oauth_npsso = NULL;
   free(cfg->psn_client_duid);
   for (int i = 0; i < MAX_MANUAL_HOSTS; i++) {
     if (cfg->manual_hosts[i] != NULL) {
@@ -587,7 +592,18 @@ bool config_serialize(VitaChiakiConfig *cfg) {
                   "PSN refresh token encryption failed; token not persisted this session");
     }
   }
-
+  
+  if (cfg->psn_oauth_npsso && cfg->psn_oauth_npsso[0] != '\0') {
+    char *enc = token_crypto_encrypt(cfg->psn_oauth_npsso, "npsso");
+    if (enc) {
+      fprintf(fp, "psn_oauth_npsso_enc = \"%s\"\n", enc);
+      free(enc);
+    } else {
+      CHIAKI_LOGW(&(context.log),
+                  "PSN NPSSO encryption failed; recovery credential not persisted");
+    }
+  }
+  
   /* Expiry is persisted only when at least one token was successfully written.
    * A stale expiry with no ciphertext would produce a broken auth state. */
   if (tokens_persisted && cfg->psn_oauth_expires_at_unix > 0) {

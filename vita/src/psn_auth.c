@@ -47,6 +47,16 @@
 #define RESPONSE_CAP_BYTES (16 * 1024)
 #define AUTH_VERIFICATION_URL_MAX 1536
 #define PSN_CA_BUNDLE_PATH "app0:/assets/psn-ca-bundle.pem"
+#define NPSSO_AUTHORIZE_URL \
+  "https://ca.account.sony.com/api/authz/v3/oauth/authorize"
+#define NPSSO_TOKEN_URL \
+  "https://ca.account.sony.com/api/authz/v3/oauth/token"
+#define NPSSO_AUTHORIZE_HOST   "ca.account.sony.com"
+#define NPSSO_MAX_TOKEN_LEN    512  /* NPSSO is ~64 chars; 512 is generous */
+
+typedef struct {
+  char location[2048];  /* captured Location: header value */
+} NpssoRedirectCapture;
 
 typedef struct {
   PsnAuthState state;
@@ -216,6 +226,168 @@ static size_t auth_write_cb(void *contents, size_t size, size_t nmemb, void *use
   return append;
 }
 
+static size_t npsso_header_cb(char *buf, size_t size, size_t nmemb, void *userdata) {
+  NpssoRedirectCapture *cap = (NpssoRedirectCapture *)userdata;
+  size_t bytes = size * nmemb;
+  if (bytes > 10 && strncasecmp(buf, "Location:", 9) == 0) {
+    const char *val = buf + 9;
+    while (*val == ' ' || *val == '\t')
+      val++;
+    size_t vlen = strlen(val);
+    while (vlen > 0 && (val[vlen - 1] == '\r' || val[vlen - 1] == '\n'))
+      vlen--;
+    size_t copy = vlen < sizeof(cap->location) - 1 ? vlen : sizeof(cap->location) - 1;
+    memcpy(cap->location, val, copy);
+    cap->location[copy] = '\0';
+  }
+  return bytes;
+}
+
+static bool npsso_parse_code(const char *url, char *code_out, size_t code_max) {
+  if (!url || !code_out || code_max == 0)
+    return false;
+  const char *p = strstr(url, "code=");
+  if (!p)
+    return false;
+  p += 5; /* skip "code=" */
+  const char *end = strpbrk(p, "&\r\n");
+  size_t len = end ? (size_t)(end - p) : strlen(p);
+  if (len == 0 || len >= code_max)
+    return false;
+  memcpy(code_out, p, len);
+  code_out[len] = '\0';
+  return true;
+}
+
+static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size_t code_max) {
+  if (!npsso || !npsso[0] || !code_out || code_max == 0)
+    return false;
+
+  /* Build query string from config fields (same params as device flow) */
+  CURL *helper = curl_easy_init();
+  if (!helper) {
+    LOGE("NPSSO: curl init failed for URL encoding");
+    return false;
+  }
+
+  /* URL-encode individual params */
+  char *enc_client_id    = curl_easy_escape(helper, oauth_client_id(),    0);
+  char *enc_redirect_uri = curl_easy_escape(helper, oauth_redirect_uri(), 0);
+  char *enc_scope        = curl_easy_escape(helper, oauth_scope(),         0);
+  curl_easy_cleanup(helper);
+
+  if (!enc_client_id || !enc_redirect_uri || !enc_scope) {
+    LOGE("NPSSO: URL-encoding failed (client_id=%s redirect=%s scope=%s)",
+         enc_client_id ? "ok" : "null",
+         enc_redirect_uri ? "ok" : "null",
+         enc_scope ? "ok" : "null");
+    curl_free(enc_client_id);
+    curl_free(enc_redirect_uri);
+    curl_free(enc_scope);
+    return false;
+  }
+
+  char authorize_url[2048];
+  int url_len = snprintf(authorize_url, sizeof(authorize_url),
+    "%s?access_type=offline&client_id=%s&redirect_uri=%s&response_type=code&scope=%s",
+    NPSSO_AUTHORIZE_URL, enc_client_id, enc_redirect_uri, enc_scope);
+  curl_free(enc_client_id);
+  curl_free(enc_redirect_uri);
+  curl_free(enc_scope);
+  if (url_len <= 0 || (size_t)url_len >= sizeof(authorize_url)) {
+    LOGE("NPSSO: authorize URL truncated (len=%d)", url_len);
+    return false;
+  }
+
+  /* Cookie header: npsso=<TOKEN> */
+  char cookie_header[NPSSO_MAX_TOKEN_LEN + 16];
+  if (snprintf(cookie_header, sizeof(cookie_header), "Cookie: npsso=%s", npsso) <= 0) {
+    LOGE("NPSSO: cookie header build failed");
+    return false;
+  }
+
+  bool ok = false;
+  CURL *curl                    = curl_easy_init();
+  struct curl_slist *headers    = NULL;
+  NpssoRedirectCapture redirect = {{0}};
+  char error_buf[CURL_ERROR_SIZE] = {0};
+  long http_code = 0;
+#ifdef __PSVITA__
+  struct curl_slist *resolve_list = NULL;
+#endif
+
+  if (!curl) {
+    LOGE("NPSSO: curl_easy_init failed for GET authorize");
+    return false;
+  }
+
+  headers = curl_slist_append(headers, cookie_header);
+  headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml");
+
+#ifdef __PSVITA__
+  if (!vita_curl_add_resolve(NPSSO_AUTHORIZE_HOST, 443, &resolve_list))
+    LOGE("NPSSO: Vita DNS resolve failed for %s; curl will fallback", NPSSO_AUTHORIZE_HOST);
+  if (resolve_list)
+    curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+#endif
+
+  curl_easy_setopt(curl, CURLOPT_URL,            authorize_url);
+  curl_easy_setopt(curl, CURLOPT_HTTPGET,        1L);
+  curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L); /* must NOT follow — we need the redirect */
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+  curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, npsso_header_cb);
+  curl_easy_setopt(curl, CURLOPT_HEADERDATA,     &redirect);
+  curl_easy_setopt(curl, CURLOPT_TIMEOUT,        15L);
+  curl_easy_setopt(curl, CURLOPT_IPRESOLVE,      CURL_IPRESOLVE_V4);
+  curl_easy_setopt(curl, CURLOPT_CAINFO,         PSN_CA_BUNDLE_PATH);
+  curl_easy_setopt(curl, CURLOPT_ERRORBUFFER,    error_buf);
+  /* Discard body (we only care about headers) */
+  curl_easy_setopt(curl, CURLOPT_NOBODY,         0L);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  auth_write_cb); /* re-use existing cb */
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA,      NULL);          /* discard body */
+
+  LOGD("NPSSO: GET authorize url=%s", authorize_url);
+  CURLcode res = curl_easy_perform(curl);
+  if (res != CURLE_OK) {
+    LOGE("NPSSO: GET authorize curl failed: %s errbuf=%s", curl_easy_strerror(res), error_buf);
+    goto cleanup_get;
+  }
+
+  curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
+  LOGD("NPSSO: GET authorize status=%ld location=%s", http_code, redirect.location);
+
+  /* Sony returns 302 → redirect carries the auth code */
+  if (http_code != 302) {
+    if (http_code == 400 || http_code == 401) {
+      psn_auth_set_error("NPSSO invalid or expired. Re-enter your NPSSO token.");
+    } else {
+      psn_auth_set_error("NPSSO authorize: unexpected HTTP %ld", (long)http_code);
+    }
+    goto cleanup_get;
+  }
+
+  if (!redirect.location[0]) {
+    psn_auth_set_error("NPSSO: 302 but no Location header captured");
+    goto cleanup_get;
+  }
+
+  if (!npsso_parse_code(redirect.location, code_out, code_max)) {
+    psn_auth_set_error("NPSSO: no auth code in redirect: %.256s", redirect.location);
+    goto cleanup_get;
+  }
+
+  LOGD("NPSSO: auth code extracted (len=%zu)", strlen(code_out));
+  ok = true;
+
+cleanup_get:
+  curl_slist_free_all(headers);
+#ifdef __PSVITA__
+  curl_slist_free_all(resolve_list);
+#endif
+  curl_easy_cleanup(curl);
+  return ok;
+}
+    
 static bool append_form_kv(CURL *curl, char *dst, size_t dst_size, size_t *off, const char *key,
                            const char *value) {
   if (!curl || !dst || !off || !key || !has_text(value))
@@ -1209,6 +1381,18 @@ bool psn_auth_refresh_token_if_needed(uint64_t now_unix, bool force) {
     return false;
   if (!oauth_configured_for_refresh()) {
     psn_auth_set_error("OAuth refresh endpoint not configured in this build");
+    if ((http_code == 400 || http_code == 401) && psn_auth_has_npsso()) {
+    LOGD("PSN auth: refresh rejected (HTTP %ld) — attempting silent NPSSO recovery", http_code);
+    psn_auth_clear_error();
+    free(response);
+    bool recovered = psn_auth_login_with_npsso(context.config.psn_oauth_npsso, now_unix);
+    if (recovered) {
+      LOGD("PSN auth: NPSSO recovery succeeded — tokens renewed automatically");
+      return true;
+    } else {
+      LOGE("PSN auth: NPSSO recovery failed: %s", psn_auth_last_error());
+      /* Fall through — set the original refresh error */
+    }
     return false;
   }
 
@@ -1307,4 +1491,95 @@ int64_t psn_auth_token_seconds_remaining(uint64_t now_unix) {
   if (context.config.psn_oauth_expires_at_unix <= now_unix)
     return 0;
   return (int64_t)(context.config.psn_oauth_expires_at_unix - now_unix);
+}
+
+bool psn_auth_has_npsso(void) {
+  return has_text(context.config.psn_oauth_npsso);
+}
+
+bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
+  if (!npsso || !npsso[0]) {
+    psn_auth_set_error("NPSSO: empty token");
+    return false;
+  }
+  if (strlen(npsso) > NPSSO_MAX_TOKEN_LEN - 1) {
+    psn_auth_set_error("NPSSO: token too long (%zu chars, max %d)",
+                       strlen(npsso), NPSSO_MAX_TOKEN_LEN - 1);
+    return false;
+  }
+
+  /* ── Step A: exchange NPSSO for an auth code ── */
+  char auth_code[256] = {0};
+  if (!psn_auth_npsso_get_auth_code(npsso, auth_code, sizeof(auth_code))) {
+    /* psn_auth_set_error already called inside */
+    LOGE("NPSSO: failed to obtain auth code");
+    return false;
+  }
+
+  /* ── Step B: exchange auth code for access + refresh tokens ── */
+  /*
+   * Build the token POST body using the same helper and the same redirect_uri /
+   * client_id as the device flow. The difference is grant_type=authorization_code.
+   */
+  CURL *enc_helper = curl_easy_init();
+  if (!enc_helper) {
+    psn_auth_set_error("NPSSO: curl init failed for token exchange");
+    return false;
+  }
+
+  char form[2048] = {0};
+  size_t off = 0;
+  bool form_ok =
+      append_form_kv(enc_helper, form, sizeof(form), &off, "grant_type",   "authorization_code") &&
+      append_form_kv(enc_helper, form, sizeof(form), &off, "code",          auth_code) &&
+      append_form_kv(enc_helper, form, sizeof(form), &off, "redirect_uri",  oauth_redirect_uri()) &&
+      append_form_kv(enc_helper, form, sizeof(form), &off, "token_format",  "jwt");
+  curl_easy_cleanup(enc_helper);
+
+  if (!form_ok) {
+    psn_auth_set_error("NPSSO: form body build failed");
+    return false;
+  }
+
+  /* Use the existing token URL (or Sony's account URL as fallback) */
+  const char *token_url = has_text(oauth_token_url()) ? oauth_token_url() : NPSSO_TOKEN_URL;
+
+  long http_code = 0;
+  char *response = NULL;
+  bool post_ok = psn_auth_http_post_form(
+      token_url, form,
+      oauth_client_id(), oauth_client_secret(),
+      &http_code, &response);
+
+  if (!post_ok || !response) {
+    psn_auth_set_error("NPSSO: token POST transport failed");
+    free(response);
+    return false;
+  }
+
+  if (http_code != 200) {
+    LOGE("NPSSO: token POST returned HTTP %ld: %.512s", http_code, response);
+    if (http_code == 400 || http_code == 401)
+      psn_auth_set_error("NPSSO auth code rejected. Re-enter NPSSO.");
+    else
+      psn_auth_set_error("NPSSO token exchange failed (HTTP %ld)", (long)http_code);
+    free(response);
+    return false;
+  }
+
+  /* ── Step C: parse and store tokens ── */
+  if (!psn_auth_apply_token_response(response, now_unix)) {
+    LOGE("NPSSO: failed to apply token response");
+    free(response);
+    return false;
+  }
+  free(response);
+
+  /* ── Step D: persist NPSSO as encrypted recovery credential ── */
+  set_config_string(&context.config.psn_oauth_npsso, npsso);
+  context.config_persist_pending = true;
+
+  LOGD("NPSSO: login successful — tokens stored, NPSSO saved as recovery credential");
+  psn_auth_clear_error();
+  return true;
 }

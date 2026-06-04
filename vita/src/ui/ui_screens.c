@@ -383,6 +383,9 @@ static void draw_profile_login_assist_panel(int x, int y, int width, int height,
 }
 
 static bool profile_auth_ime_running = false;
+static bool   profile_npsso_ime_running = false;
+static SceWChar16 profile_npsso_ime_title_w[64];
+static SceWChar16 profile_npsso_ime_input_buf[512]; /* NPSSO is ~64 chars */
 static SceWChar16 profile_auth_ime_input_buf[1024];
 static SceWChar16 profile_auth_ime_title_w[96];
 
@@ -439,6 +442,92 @@ static void open_psn_auth_code_ime(void) {
     profile_auth_ime_running = true;
   } else {
     trigger_hints_popup("Could not open text input");
+  }
+}
+
+static void open_psn_npsso_ime(void) {
+  if (profile_npsso_ime_running)
+    return;
+
+  memset(profile_npsso_ime_input_buf, 0, sizeof(profile_npsso_ime_input_buf));
+  memset(profile_npsso_ime_title_w,   0, sizeof(profile_npsso_ime_title_w));
+
+  const char *title = "Paste NPSSO token (from browser cookies)";
+  const size_t cap  = sizeof(profile_npsso_ime_title_w) / sizeof(profile_npsso_ime_title_w[0]) - 1;
+  size_t tlen       = strlen(title);
+  size_t clen       = tlen < cap ? tlen : cap;
+  for (size_t i = 0; i < clen; i++)
+    profile_npsso_ime_title_w[i] = (SceWChar16)title[i];
+  profile_npsso_ime_title_w[clen] = 0;
+
+  SceImeDialogParam param;
+  sceImeDialogParamInit(&param);
+  param.supportedLanguages = 0;
+  param.languagesForced    = SCE_FALSE;
+  param.type               = SCE_IME_TYPE_DEFAULT;
+  param.option             = 0;
+  param.textBoxMode        = SCE_IME_DIALOG_TEXTBOX_MODE_WITH_CLEAR;
+  param.maxTextLength      =
+      (sizeof(profile_npsso_ime_input_buf) / sizeof(profile_npsso_ime_input_buf[0])) - 1;
+  param.title              = profile_npsso_ime_title_w;
+  param.initialText        = NULL;
+  param.inputTextBuffer    = profile_npsso_ime_input_buf;
+
+  if (sceImeDialogInit(&param) >= 0) {
+    profile_npsso_ime_running = true;
+    trigger_hints_popup("Paste your NPSSO token and confirm with Enter");
+  } else {
+    trigger_hints_popup("Could not open text input");
+  }
+}
+
+static void poll_psn_npsso_ime(uint64_t now_unix) {
+  if (!profile_npsso_ime_running)
+    return;
+
+  if (sceImeDialogGetStatus() != SCE_COMMON_DIALOG_STATUS_FINISHED)
+    return;
+
+  SceImeDialogResult result;
+  memset(&result, 0, sizeof(result));
+  sceImeDialogGetResult(&result);
+  sceImeDialogTerm();
+  profile_npsso_ime_running = false;
+
+  if (result.button != SCE_IME_DIALOG_BUTTON_ENTER) {
+    trigger_hints_popup("NPSSO entry cancelled");
+    return;
+  }
+
+  /* Convert from UTF-16LE to UTF-8 using the existing helper */
+  char npsso_input[512];
+  utf16_to_utf8_local(profile_npsso_ime_input_buf,
+                      sizeof(profile_npsso_ime_input_buf) / sizeof(profile_npsso_ime_input_buf[0]),
+                      npsso_input, sizeof(npsso_input));
+
+  /* Trim whitespace (users often copy trailing spaces) */
+  size_t len = strlen(npsso_input);
+  while (len > 0 && (npsso_input[len - 1] == ' ' || npsso_input[len - 1] == '\t' ||
+                     npsso_input[len - 1] == '\n' || npsso_input[len - 1] == '\r'))
+    npsso_input[--len] = '\0';
+
+  if (len == 0) {
+    trigger_hints_popup("NPSSO: nothing entered");
+    return;
+  }
+
+  trigger_hints_popup("Signing in with NPSSO... please wait");
+
+  if (psn_auth_login_with_npsso(npsso_input, now_unix)) {
+    persist_config_or_warn();
+    trigger_hints_popup("NPSSO login successful! Auth is now permanent.");
+    /* Immediately fetch host list with the new token */
+    if (psn_remote_refresh_hosts() == 0)
+      ui_cards_update_cache(true);
+  } else if (psn_auth_last_error()[0]) {
+    trigger_hints_popup(psn_auth_last_error());
+  } else {
+    trigger_hints_popup("NPSSO login failed — check the token and try again");
   }
 }
 
@@ -1632,6 +1721,14 @@ static void draw_connection_info_card(int x, int y, int width, int height, bool 
                    FONT_SIZE_SMALL, expiry_buf);
     }
   }
+  
+    if (psn_auth_has_npsso() && psn_auth_enabled()) {
+    cy += 4;  /* small extra gap for the badge row */
+    ui_text_draw(font, content_x, cy, UI_COLOR_TEXT_SECONDARY, FONT_SIZE_SMALL, "Recovery");
+    ui_text_draw(font, col2_x,    cy, RGBA8(0x4C, 0xAF, 0x50, 255), FONT_SIZE_SMALL,
+                 "NPSSO \xe2\x9c\x93 (permanent)");
+    cy += body_line_h;
+  }
 
   /* ── Bottom strip: Log out button + hint ────────────────────────────── */
   if (selected) {
@@ -1661,7 +1758,7 @@ static void draw_connection_info_card(int x, int y, int width, int height, bool 
     if (!psn_auth_enabled()) {
       hint = "Enable PSN internet mode in Settings";
     } else if (device_login) {
-      hint = "X: Enter code | Start: QR | Select: Browser | Square: Cancel";
+      hint = "X: Enter code | Start: QR | Square: Cancel | Tri: NPSSO (switch)";
     } else if (btn_focused && s_logout_confirm_until_us != 0 &&
                now_us < s_logout_confirm_until_us) {
       hint = "Press X again to confirm log out";
@@ -1670,7 +1767,7 @@ static void draw_connection_info_card(int x, int y, int width, int height, bool 
     } else if (psn_valid) {
       hint = "X: Refresh Hosts | Down: Log out";
     } else {
-      hint = "X: Start Browser Login";
+      hint = "X: Device Flow Login | Triangle: NPSSO Login (permanent)";
     }
     int hint_x = device_login ? content_x : (content_x + LOGOUT_BTN_LEFT_PAD + LOGOUT_BTN_W + 10);
     ui_text_draw_centered_v(font, hint_x, strip_y, LOGOUT_BTN_H, UI_COLOR_TEXT_TERTIARY,
@@ -1894,6 +1991,7 @@ UIScreenType ui_screen_draw_profile(void) {
   }
 
   poll_psn_auth_code_ime(now_unix);
+  poll_psn_npsso_ime(now_unix);
 
   // Select button shows hints popup (or browser fallback during active login)
   if (btn_pressed(SCE_CTRL_SELECT)) {
@@ -2028,6 +2126,17 @@ UIScreenType ui_screen_draw_profile(void) {
   if (profile_state.current_section == PROFILE_SECTION_CONNECTION && btn_pressed(SCE_CTRL_SQUARE) &&
       psn_auth_device_login_active()) {
     psn_auth_cancel_device_login();
+    if (profile_state.current_section == PROFILE_SECTION_CONNECTION &&
+      btn_pressed(SCE_CTRL_TRIANGLE) && psn_auth_enabled()) {
+    if (psn_auth_device_login_active()) {
+      /* Cancel the current device flow first — they're switching method */
+      psn_auth_cancel_device_login();
+      profile_login_qr_visible    = false;
+      profile_login_qr_fullscreen = false;
+      profile_login_qr.valid      = false;
+    }
+    open_psn_npsso_ime();
+  }
     profile_login_qr_visible = false;
     profile_login_qr_fullscreen = false;
     profile_login_qr.valid = false;

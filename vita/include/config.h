@@ -40,6 +40,7 @@ typedef struct vita_chiaki_config_t {
   char *psn_oauth_client_secret;
   char *psn_oauth_scope;
   char *psn_oauth_redirect_uri;
+  char *psn_oauth_npsso;
   char *psn_client_duid;
   bool psn_remoteplay_enabled;
   /// Whether discovery is enabled by default

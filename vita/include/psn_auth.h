@@ -13,6 +13,8 @@ typedef enum {
   PSN_AUTH_STATE_ERROR,
 } PsnAuthState;
 
+bool psn_auth_has_npsso(void);
+bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix);
 bool psn_auth_enabled(void);
 bool psn_auth_has_tokens(void);
 bool psn_auth_token_is_valid(uint64_t now_unix);
