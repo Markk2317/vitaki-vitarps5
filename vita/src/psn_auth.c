@@ -356,28 +356,25 @@ static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size
   curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
   LOGD("NPSSO: GET authorize status=%ld location=%s", http_code, redirect.location);
 
-if (http_code != 302) {
-      if (http_code == 400 || http_code == 401) {
-        psn_auth_set_error("NPSSO invalid or expired. Re-enter your NPSSO token.");
-      } else {
-        char _em[80];
-        snprintf(_em, sizeof(_em), "NPSSO authorize: unexpected HTTP %ld", (long)http_code);
-        psn_auth_set_error(_em);
-      }
-      goto cleanup_get;
+  /* Sony returns 302 → redirect carries the auth code */
+  if (http_code != 302) {
+    if (http_code == 400 || http_code == 401) {
+      psn_auth_set_error("NPSSO invalid or expired. Re-enter your NPSSO token.");
+    } else {
+      { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO authorize: unexpected HTTP %ld", (long)http_code); psn_auth_set_error(_em); }
     }
+    goto cleanup_get;
+  }
 
-    if (!redirect.location[0]) {
-      psn_auth_set_error("NPSSO: 302 but no Location header captured");
-      goto cleanup_get;
-    }
+  if (!redirect.location[0]) {
+    psn_auth_set_error("NPSSO: 302 but no Location header captured");
+    goto cleanup_get;
+  }
 
-    if (!npsso_parse_code(redirect.location, code_out, code_max)) {
-      char _em[320];
-      snprintf(_em, sizeof(_em), "NPSSO: no auth code in redirect: %.256s", redirect.location);
-      psn_auth_set_error(_em);
-      goto cleanup_get;
-    }
+  if (!npsso_parse_code(redirect.location, code_out, code_max)) {
+    { char _em[320]; snprintf(_em, sizeof(_em), "NPSSO: no auth code in redirect: %.256s", redirect.location); psn_auth_set_error(_em); }
+    goto cleanup_get;
+  }
 
   LOGD("NPSSO: auth code extracted (len=%zu)", strlen(code_out));
   ok = true;
@@ -1433,7 +1430,7 @@ bool psn_auth_refresh_token_if_needed(uint64_t now_unix, bool force) {
       return true;
     }
     LOGE("PSN auth: NPSSO recovery failed: %s", psn_auth_last_error());
-    psn_auth_set_error("Token refresh failed and NPSSO recovery failed");
+    psn_auth_set_error("Token refresh and NPSSO recovery both failed");
   } else {
     LOGE("PSN auth refresh rejected status=%ld response_len=%u", http_code,
          (unsigned)(response ? strlen(response) : 0));
@@ -1506,10 +1503,7 @@ bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
     return false;
   }
   if (strlen(npsso) > NPSSO_MAX_TOKEN_LEN - 1) {
-    char _em[80];
-    snprintf(_em, sizeof(_em), "NPSSO: token too long (%zu chars, max %d)",
-             strlen(npsso), NPSSO_MAX_TOKEN_LEN - 1);
-    psn_auth_set_error(_em);
+    { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO: token too long (%zu chars, max %d)", strlen(npsso), NPSSO_MAX_TOKEN_LEN - 1); psn_auth_set_error(_em); }
     return false;
   }
 
@@ -1567,9 +1561,7 @@ bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
     if (http_code == 400 || http_code == 401)
       psn_auth_set_error("NPSSO auth code rejected. Re-enter NPSSO.");
     else
-      char _em[80];
-      snprintf(_em, sizeof(_em), "NPSSO token exchange failed (HTTP %ld)", (long)http_code);
-      psn_auth_set_error(_em);
+      { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO token exchange failed (HTTP %ld)", (long)http_code); psn_auth_set_error(_em); }
     free(response);
     return false;
   }
