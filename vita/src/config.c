@@ -283,7 +283,7 @@ static void parse_basic_settings(VitaChiakiConfig *cfg, toml_table_t *settings,
   TokenLoadResult access_enc_result = load_token_from_encrypted(
       settings, "psn_oauth_access_token_enc", &cfg->psn_oauth_access_token, "access");
   TokenLoadResult refresh_enc_result = load_token_from_encrypted(
-    settings, "psn_oauth_refresh_token_enc", &cfg->psn_oauth_refresh_token, "refresh");
+      settings, "psn_oauth_refresh_token_enc", &cfg->psn_oauth_refresh_token, "refresh");
   load_token_from_encrypted(
       settings, "psn_oauth_npsso_enc", &cfg->psn_oauth_npsso, "npsso");
 
