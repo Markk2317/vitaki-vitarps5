@@ -1767,7 +1767,7 @@ static void draw_connection_info_card(int x, int y, int width, int height, bool 
     } else if (psn_valid) {
       hint = "X: Refresh Hosts | Down: Log out";
     } else {
-      hint = "X: Device Flow Login | Triangle: NPSSO Login (permanent)";
+      hint = "X: Device Flow Login | Select: NPSSO Login (permanent)";
     }
     int hint_x = device_login ? content_x : (content_x + LOGOUT_BTN_LEFT_PAD + LOGOUT_BTN_W + 10);
     ui_text_draw_centered_v(font, hint_x, strip_y, LOGOUT_BTN_H, UI_COLOR_TEXT_TERTIARY,
@@ -2126,22 +2126,25 @@ UIScreenType ui_screen_draw_profile(void) {
   if (profile_state.current_section == PROFILE_SECTION_CONNECTION && btn_pressed(SCE_CTRL_SQUARE) &&
       psn_auth_device_login_active()) {
     psn_auth_cancel_device_login();
-    if (profile_state.current_section == PROFILE_SECTION_CONNECTION &&
-      btn_pressed(SCE_CTRL_TRIANGLE) && psn_auth_enabled()) {
+    profile_login_qr_visible    = false;
+    profile_login_qr_fullscreen = false;
+    profile_login_qr.valid      = false;
+    profile_login_qr_url[0]     = '\0';
+    trigger_hints_popup("PSN login canceled");
+  }
+
+  /* Select: open NPSSO permanent login.
+   * Select previously opened the browser fallback — superseded by NPSSO.
+   * Using Select avoids the conflict with Triangle which opens the main menu. */
+  if (profile_state.current_section == PROFILE_SECTION_CONNECTION &&
+      btn_pressed(SCE_CTRL_SELECT) && psn_auth_enabled()) {
     if (psn_auth_device_login_active()) {
-      /* Cancel the current device flow first — they're switching method */
       psn_auth_cancel_device_login();
       profile_login_qr_visible    = false;
       profile_login_qr_fullscreen = false;
       profile_login_qr.valid      = false;
     }
     open_psn_npsso_ime();
-  }
-    profile_login_qr_visible = false;
-    profile_login_qr_fullscreen = false;
-    profile_login_qr.valid = false;
-    profile_login_qr_url[0] = '\0';
-    trigger_hints_popup("PSN login canceled");
   }
 
   /* Start: toggle QR visibility during device login. */
