@@ -521,27 +521,7 @@ void draw_ui() {
           last_token_check_unix = now_unix;
           psn_auth_refresh_token_if_needed(now_unix, false);
         }
-        /* ====================================================================
- * CHANGES TO vita/src/ui.c
- * ====================================================================
- *
- * CHANGE 1 — Add include near the other psp2/net/*.h includes
- * (after #include <psp2/net/netctl.h> which is already in main.c;
- *  ui.c does not currently include it)
- *
- *   #include <psp2/net/netctl.h>
- *
- *
- * CHANGE 2 — Insert this block in the main while(true) loop,
- * immediately AFTER the existing 60-second token refresh block:
- *
- *   if (now_unix - last_token_check_unix >= 60) {
- *     last_token_check_unix = now_unix;
- *     psn_auth_refresh_token_if_needed(now_unix, false);
- *   }
- *
- * Paste the block below right after the closing brace of that `if`:
- * ==================================================================== */
+        
 
     /* ── Immediate token refresh on WiFi reconnect ─────────────────────
      *
@@ -572,9 +552,6 @@ void draw_ui() {
           }
         }
         prev_net_ctl_state = cur_net_ctl_state;
-      }
-    }
-    
       }
     }
 
