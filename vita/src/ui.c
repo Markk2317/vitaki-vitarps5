@@ -521,22 +521,11 @@ void draw_ui() {
           last_token_check_unix = now_unix;
           psn_auth_refresh_token_if_needed(now_unix, false);
         }
-        
+      }  /* if (t != (time_t)-1) */
+    }  /* if (!context.stream.is_streaming) — token refresh */
 
-    /* ── Immediate token refresh on WiFi reconnect ─────────────────────
-     *
-     * sceNetCtlInetGetState() is a fast, non-blocking kernel call.  We poll
-     * it every frame (negligible cost) and watch for the edge:
-     *   prev_state != CONNECTED  →  cur_state == CONNECTED
-     *
-     * On that edge we force an immediate PSN token refresh so the new
-     * IP is usable before the 60-second idle timer fires.
-     *
-     * SCE_NETCTL_STATE_CONNECTED == 3 (defined in <psp2/net/netctl.h>).
-     *
-     * prev_net_ctl_state starts at -1 so the very first iteration (where
-     * the Vita has been connected all along) never fires a spurious refresh.
-     */
+    /* Immediate WiFi reconnect token refresh: watch for
+     * disconnected->connected transition and refresh immediately. */
     if (!context.stream.is_streaming) {
       static int prev_net_ctl_state = -1;
       int cur_net_ctl_state = -1;
@@ -546,15 +535,13 @@ void draw_ui() {
             cur_net_ctl_state  == 3) {
           time_t t_nc = time(NULL);
           if (t_nc != (time_t)-1) {
-            LOGD("UI: network reconnected (prev=%d → cur=3) — forcing PSN token refresh",
-                 prev_net_ctl_state);
+            LOGD("UI: WiFi reconnected — forcing PSN token refresh");
             psn_auth_on_network_change((uint64_t)t_nc);
           }
         }
         prev_net_ctl_state = cur_net_ctl_state;
       }
     }
-
     // Always read controller input - input thread uses Ext2 variant to access controller
     // independently
     if (!sceCtrlReadBufferPositive(0, &ctrl, 1)) {
