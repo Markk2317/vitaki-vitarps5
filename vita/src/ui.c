@@ -522,10 +522,9 @@ void draw_ui() {
           psn_auth_refresh_token_if_needed(now_unix, false);
         }
       }  /* if (t != (time_t)-1) */
-    }  /* if (!context.stream.is_streaming) — token refresh */
+    }  /* if (!context.stream.is_streaming) */
 
-    /* Immediate WiFi reconnect token refresh: watch for
-     * disconnected->connected transition and refresh immediately. */
+    /* Immediate WiFi reconnect token refresh. */
     if (!context.stream.is_streaming) {
       static int prev_net_ctl_state = -1;
       int cur_net_ctl_state = -1;
