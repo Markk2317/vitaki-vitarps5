@@ -290,7 +290,7 @@ static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size
   char authorize_url[2048];
   int url_len = snprintf(authorize_url, sizeof(authorize_url),
     "%s?access_type=offline&client_id=%s&redirect_uri=%s&response_type=code&scope=%s",
-    NPSSO_AUTHORIZE_URL, enc_client_id, enc_redirect_uri, enc_scope);
+    oauth_authorize_url(), enc_client_id, enc_redirect_uri, enc_scope);
   curl_free(enc_client_id);
   curl_free(enc_redirect_uri);
   curl_free(enc_scope);
@@ -325,8 +325,8 @@ static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size
   headers = curl_slist_append(headers, "Accept: text/html,application/xhtml+xml");
 
 #ifdef __PSVITA__
-  if (!vita_curl_add_resolve(NPSSO_AUTHORIZE_HOST, 443, &resolve_list))
-    LOGE("NPSSO: Vita DNS resolve failed for %s; curl will fallback", NPSSO_AUTHORIZE_HOST);
+  if (!vita_curl_add_resolve("auth.api.sonyentertainmentnetwork.com", 443, &resolve_list))
+    LOGE("NPSSO: Vita DNS resolve failed; curl will fallback");
   if (resolve_list)
     curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
 #endif
@@ -361,7 +361,7 @@ static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size
     if (http_code == 400 || http_code == 401) {
       psn_auth_set_error("NPSSO invalid or expired. Re-enter your NPSSO token.");
     } else {
-      { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO authorize: unexpected HTTP %ld", (long)http_code); psn_auth_set_error(_em); }
+      psn_auth_set_error("NPSSO authorize: unexpected HTTP %ld", (long)http_code);
     }
     goto cleanup_get;
   }
@@ -372,7 +372,7 @@ static bool psn_auth_npsso_get_auth_code(const char *npsso, char *code_out, size
   }
 
   if (!npsso_parse_code(redirect.location, code_out, code_max)) {
-    { char _em[320]; snprintf(_em, sizeof(_em), "NPSSO: no auth code in redirect: %.256s", redirect.location); psn_auth_set_error(_em); }
+    psn_auth_set_error("NPSSO: no auth code in redirect: %.256s", redirect.location);
     goto cleanup_get;
   }
 
@@ -1381,6 +1381,18 @@ bool psn_auth_refresh_token_if_needed(uint64_t now_unix, bool force) {
     return false;
   if (!oauth_configured_for_refresh()) {
     psn_auth_set_error("OAuth refresh endpoint not configured in this build");
+    if ((http_code == 400 || http_code == 401) && psn_auth_has_npsso()) {
+    LOGD("PSN auth: refresh rejected (HTTP %ld) — attempting silent NPSSO recovery", http_code);
+    psn_auth_clear_error();
+    free(response);
+    bool recovered = psn_auth_login_with_npsso(context.config.psn_oauth_npsso, now_unix);
+    if (recovered) {
+      LOGD("PSN auth: NPSSO recovery succeeded — tokens renewed automatically");
+      return true;
+    } else {
+      LOGE("PSN auth: NPSSO recovery failed: %s", psn_auth_last_error());
+      /* Fall through — set the original refresh error */
+    }
     return false;
   }
 
@@ -1419,18 +1431,6 @@ bool psn_auth_refresh_token_if_needed(uint64_t now_unix, bool force) {
   if (http_code == 200 && apply_token_response(response, now_unix)) {
     LOGD("PSN auth refresh succeeded response_len=%u", (unsigned)(response ? strlen(response) : 0));
     refreshed = true;
-  } else if ((http_code == 400 || http_code == 401) && psn_auth_has_npsso()) {
-    /* NPSSO silent recovery: refresh token rejected — try re-auth with stored NPSSO */
-    LOGD("PSN auth: refresh rejected (HTTP %ld) — attempting silent NPSSO recovery", http_code);
-    free(response);
-    response = NULL;
-    bool recovered = psn_auth_login_with_npsso(context.config.psn_oauth_npsso, now_unix);
-    if (recovered) {
-      LOGD("PSN auth: NPSSO recovery succeeded — tokens renewed automatically");
-      return true;
-    }
-    LOGE("PSN auth: NPSSO recovery failed: %s", psn_auth_last_error());
-    psn_auth_set_error("Token refresh and NPSSO recovery both failed");
   } else {
     LOGE("PSN auth refresh rejected status=%ld response_len=%u", http_code,
          (unsigned)(response ? strlen(response) : 0));
@@ -1503,7 +1503,8 @@ bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
     return false;
   }
   if (strlen(npsso) > NPSSO_MAX_TOKEN_LEN - 1) {
-    { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO: token too long (%zu chars, max %d)", strlen(npsso), NPSSO_MAX_TOKEN_LEN - 1); psn_auth_set_error(_em); }
+    psn_auth_set_error("NPSSO: token too long (%zu chars, max %d)",
+                       strlen(npsso), NPSSO_MAX_TOKEN_LEN - 1);
     return false;
   }
 
@@ -1545,7 +1546,7 @@ bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
 
   long http_code = 0;
   char *response = NULL;
-  bool post_ok = oauth_post_form(
+  bool post_ok = psn_auth_http_post_form(
       token_url, form,
       oauth_client_id(), oauth_client_secret(),
       &http_code, &response);
@@ -1561,13 +1562,13 @@ bool psn_auth_login_with_npsso(const char *npsso, uint64_t now_unix) {
     if (http_code == 400 || http_code == 401)
       psn_auth_set_error("NPSSO auth code rejected. Re-enter NPSSO.");
     else
-      { char _em[80]; snprintf(_em, sizeof(_em), "NPSSO token exchange failed (HTTP %ld)", (long)http_code); psn_auth_set_error(_em); }
+      psn_auth_set_error("NPSSO token exchange failed (HTTP %ld)", (long)http_code);
     free(response);
     return false;
   }
 
   /* ── Step C: parse and store tokens ── */
-  if (!apply_token_response(response, now_unix)) {
+  if (!psn_auth_apply_token_response(response, now_unix)) {
     LOGE("NPSSO: failed to apply token response");
     free(response);
     return false;
