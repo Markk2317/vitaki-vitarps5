@@ -236,7 +236,7 @@ ensure_docker_image() {
             if ! docker run --rm \
                 --platform linux/amd64 \
                 "$DOCKER_IMAGE" \
-                bash -lc "test -f /usr/local/vitasdk/arm-vita-eabi/lib/libjson-c.a && test -f /usr/local/vitasdk/arm-vita-eabi/include/json-c/json.h && test -f /usr/local/vitasdk/arm-vita-eabi/lib/libminiupnpc.a && test -f /usr/local/vitasdk/arm-vita-eabi/include/miniupnpc/miniupnpc.h" > /dev/null 2>&1; then
+                bash -lc "test -f /usr/local/vitasdk/arm-vita-eabi/lib/libjson-c.a && test -f /usr/local/vitasdk/arm-vita-eabi/include/json-c/json.h && test -f /usr/local/vitasdk/arm-vita-eabi/lib/libminiupnpc.a"; then
                 log_warning "Custom Docker image is missing holepunch dependencies (json-c/miniupnpc); rebuilding image"
                 build_docker_image
             fi
@@ -336,10 +336,13 @@ build_vpk() {
             # VPK should be in vita subdirectory
             find . -name '*.vpk' -exec ls -la {} \;
 
-            # Copy VPK to expected location
+            # Copy VPK to build root for easier access
             if [ -f vita/VitaRPS5.vpk ]; then
                 cp vita/VitaRPS5.vpk ${PROJECT_NAME}.vpk
                 echo 'VPK copied to ${PROJECT_NAME}.vpk'
+            elif [ -f vita/VitakiFork.vpk ]; then
+                cp vita/VitakiFork.vpk ${PROJECT_NAME}.vpk
+                echo 'VPK copied from VitakiFork.vpk to ${PROJECT_NAME}.vpk'
             fi
 
             echo 'Build completed successfully!'
@@ -365,6 +368,12 @@ build_vpk() {
         if [ -n "$vpk_files" ]; then
             log_warning "VPK created with different name:"
             echo "$vpk_files"
+            # Try to copy the first one found
+            local first_vpk=$(echo "$vpk_files" | head -1)
+            if [ -f "$first_vpk" ]; then
+                cp "$first_vpk" "$BUILD_DIR/${PROJECT_NAME}.vpk"
+                log_info "Copied found VPK to $BUILD_DIR/${PROJECT_NAME}.vpk"
+            fi
         else
             log_error "No VPK file found in build directory"
             exit 1
@@ -424,7 +433,7 @@ lint_code() {
         bash -c "
             if [ \"\$LINT_STRICT\" = \"1\" ]; then STRICT=\"\"; else STRICT=\" || true\"; fi
             if command -v cppcheck >/dev/null 2>&1; then
-                eval \"cppcheck --enable=warning,performance,portability --std=c99 --language=c --inline-suppr -q --suppressions-list=.cppcheck-suppressions -I vita/include -I lib/include vita/src/ vita/include/\${STRICT}\"
+                eval \"cppcheck --enable=warning,performance,portability --std=c99 --language=c --inline-suppr -q --suppressions-list=.cppcheck-suppressions -I vita/include -I lib/include vita/src/ lib/src/\${STRICT}\"
             else
                 echo 'cppcheck not available in this image'
                 # Use basic gcc checks instead
