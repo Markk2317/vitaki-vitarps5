@@ -49,11 +49,19 @@
 #include "ui/ui_controller_diagram.h"
 
 static int vita_init() {
-  // Overclock various aspects of the vita
+  // Overclock various aspects of the vita for optimal remote play performance
+  // ARM: 444MHz (max stable for Vita)
+  // GPU: 222MHz (max stable)
+  // BUS: 222MHz (max stable)
+  // XBAR: 166MHz (GPU crossbar)
   scePowerSetArmClockFrequency(444);
   scePowerSetGpuClockFrequency(222);
   scePowerSetBusClockFrequency(222);
   scePowerSetGpuXbarClockFrequency(166);
+  
+  // Optimize power mode for streaming
+  scePowerSetUsingWireless(1);  // Enable wireless power optimization
+  scePowerSetCpuClockFrequency(444);  // Set CPU to max frequency
   // Seed OpenSSL
   char random_seed[0x40] = {0};
   sceKernelGetRandomNumber(random_seed, sizeof(random_seed));

@@ -1,0 +1,19 @@
+--- vita/src/video.c
++++ vita/src/video.c
+@@ -1,6 +1,7 @@
+ #include "video.h"
+ #include "context.h"
+ #include <psp2/kernel/processmgr.h>
++#include <stdatomic.h>
+ 
+ enum ScreenDimensions {
+   SCREEN_WIDTH = 960,
+@@ -70,7 +71,7 @@ SceUID decoderblock = -1;
+ SceUID videodecblock = -1;
+ SceUID videodecUnmap = -1;
+ SceUIntVAddr videodecContext = 0;
+-static volatile bool frame_ready_for_display = false;
++static _Atomic(bool) frame_ready_for_display = false;
+ 
+ typedef struct {
+   unsigned int texture_width;

@@ -25,7 +25,6 @@
 #include <chiaki/thread.h>
 
 #include <stdbool.h>
-#include <stdatomic.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/display.h>
@@ -72,7 +71,7 @@ SceUIntVAddr videodecContext = 0;
 SceAvcdecQueryDecoderInfo *decoder_info = NULL;
 
 static bool active_video_thread = true;
-static _Atomic(bool) frame_ready_for_display = false;
+static volatile bool frame_ready_for_display = false;
 
 typedef struct {
   unsigned int texture_width;
@@ -513,11 +512,8 @@ int vita_h264_decode_frame(uint8_t *buf, size_t buf_size) {
 
   chiaki_mutex_lock(&mtx);
   if (!threadSetupComplete) {
-    // Optimize thread scheduling for decode performance
-    // Priority 64 is high priority, USER_0 core for decode
     sceKernelChangeThreadPriority(SCE_KERNEL_THREAD_ID_SELF, 64);
     sceKernelChangeThreadCpuAffinityMask(SCE_KERNEL_THREAD_ID_SELF, SCE_KERNEL_CPU_MASK_USER_0);
-    LOGD("Video decode thread optimized: priority=64, affinity=USER_0");
     threadSetupComplete = true;
   }
   if (buf_size > sceAvcdecDecodeAvailableSize(decoder)) {

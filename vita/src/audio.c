@@ -9,6 +9,10 @@
 #define DEVICE_BUFFERS 4
 #define DEVICE_FRAME_QUEUE_LIMIT 0
 
+// Audio optimization constants
+#define AUDIO_THREAD_PRIORITY 80  // High priority for audio
+#define AUDIO_BUFFER_CATCHUP_THRESHOLD 2  // Frames before catchup
+
 int port = -1;
 int rate = -1;
 int channels = -1;

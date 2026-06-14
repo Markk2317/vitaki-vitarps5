@@ -26,6 +26,14 @@ static void request_stream_stop(const char *reason);
 // longer than transient link-wait messages.
 #define HINT_DURATION_CREDENTIAL_US (7 * 1000 * 1000ULL)
 
+// PSN Optimization Constants
+#define PSN_PREPARE_TIMEOUT_SEC 30
+#define PSN_REMOTE_BITRATE_CAP_KBPS 3500
+#define PSN_REMOTE_BITRATE_MIN_KBPS 1500
+#define PSN_PACKET_LOSS_THRESHOLD 5.0f
+#define PSN_CONNECT_MAX_RETRIES 3
+#define PSN_CONNECT_RETRY_DELAY_MS 2000
+
 static bool host_mac_is_zero(const uint8_t mac[6]) {
   if (!mac)
     return true;

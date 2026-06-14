@@ -320,9 +320,15 @@ int psn_remote_prepare_connect_host(VitaChiakiHost *host
 
   char selected_addr[PSN_SELECTED_ADDR_SIZE] = {0};
   chiaki_get_ps_selected_addr(session, selected_addr);
-  if (!selected_addr[0]) {
-    LOGE("PSN remote prepare failed: holepunch did not return a host address");
-    psn_remote_set_error("PSN holepunch did not return a host address.");
+  // Validate address: not empty and reasonable length (IPv6 max ~45 chars)
+  size_t addr_len = strlen(selected_addr);
+  if (!selected_addr[0] || addr_len > 45 || addr_len < 7) {
+    LOGE("PSN remote prepare failed: invalid holepunch address (len=%zu)", addr_len);
+    if (addr_len > 45) {
+      psn_remote_set_error("PSN holepunch returned invalid address (too long).");
+    } else {
+      psn_remote_set_error("PSN holepunch did not return a valid host address.");
+    }
     chiaki_holepunch_session_fini(session);
     return 1;
   }
