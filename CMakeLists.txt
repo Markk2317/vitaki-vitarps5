@@ -78,6 +78,17 @@ if(CHIAKI_IS_VITA)
 		add_definitions(-DCHIAKI_ENABLE_VITA_HOLEPUNCH)
 	endif()
 
+	# Vita Optimization Flags
+	add_definitions(-DVITA_OPTIMIZE_PERFORMANCE)
+	add_definitions(-DVITA_ENABLE_ADAPTIVE_BITRATE)
+	add_definitions(-DVITA_ENABLE_THREAD_AFFINITY)
+	add_definitions(-DVITA_ENABLE_FRAME_VALIDATION)
+	add_definitions(-DVITA_ENABLE_RETRY_LOGIC)
+
+	# Compiler optimization flags for Vita
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -march=armv7-a -mtune=cortex-a9 -mfpu=neon")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=armv7-a -mtune=cortex-a9 -mfpu=neon")
+
 	# VitaSDK's libcurl currently fails during HTTPS connect setup for PSN
 	# token exchange, so Vita builds should use the vendored curl we can ship
 	# and patch in-tree.
