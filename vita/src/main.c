@@ -61,7 +61,7 @@ static int vita_init() {
   
   // Optimize power mode for streaming
   scePowerSetUsingWireless(1);  // Enable wireless power optimization
-  scePowerSetCpuClockFrequency(444);  // Set CPU to max frequency
+  scePowerSetArmClockFrequency(444);   // Set CPU to max frequency
   // Seed OpenSSL
   char random_seed[0x40] = {0};
   sceKernelGetRandomNumber(random_seed, sizeof(random_seed));
