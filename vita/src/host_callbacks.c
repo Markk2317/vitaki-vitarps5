@@ -24,6 +24,7 @@ static void host_handle_login_pin_request(ChiakiEvent *event) {
   context.ui_state.pin_entry_incorrect = pin_incorrect;
   context.ui_state.pin_entry_cursor = 0;
   memset(context.ui_state.pin_entry_buffer, 0, sizeof(context.ui_state.pin_entry_buffer));
+  memset(context.ui_state.pin_entry_digit_set, 0, sizeof(context.ui_state.pin_entry_digit_set));
   
   LOGD("PIN entry activated (incorrect=%s)", pin_incorrect ? "true" : "false");
 }

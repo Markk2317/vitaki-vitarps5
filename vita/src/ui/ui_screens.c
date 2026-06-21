@@ -3806,7 +3806,7 @@ bool ui_screen_draw_login_pin(void) {
     int x = pin_start_x + i * (pin_digit_width + pin_spacing);
     uint8_t digit = context.ui_state.pin_entry_buffer[i];
     bool is_current = (context.ui_state.pin_entry_cursor == i);
-    bool has_value = (digit > 0 || i < context.ui_state.pin_entry_cursor);
+    bool has_value = context.ui_state.pin_entry_digit_set[i];
 
     // Draw digit box
     uint32_t box_color = is_current ? UI_COLOR_PRIMARY_BLUE : UI_COLOR_SHADOW;
@@ -3821,7 +3821,7 @@ bool ui_screen_draw_login_pin(void) {
     vita2d_draw_rectangle(x + pin_digit_width - 2, pin_y, 2, pin_digit_height, box_color);
 
     // Draw digit or placeholder
-    if (has_value && digit > 0) {
+    if (has_value) {
       char digit_str[2] = {0};
       digit_str[0] = '0' + digit;
       ui_text_draw(font, x + pin_digit_width / 2 - 5, pin_y + pin_digit_height / 2 - 10,
@@ -3849,9 +3849,11 @@ bool ui_screen_draw_login_pin(void) {
   } else if (btn_pressed(SCE_CTRL_UP)) {
     uint8_t *digit = &context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor];
     *digit = (*digit + 1) % 10;
+    context.ui_state.pin_entry_digit_set[context.ui_state.pin_entry_cursor] = true;
   } else if (btn_pressed(SCE_CTRL_DOWN)) {
     uint8_t *digit = &context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor];
     *digit = (*digit + 9) % 10;  // Equivalent to -1 mod 10
+    context.ui_state.pin_entry_digit_set[context.ui_state.pin_entry_cursor] = true;
   } else if (btn_pressed(SCE_CTRL_SQUARE)) {
     // Clear current digit
     context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor] = 0;
@@ -3859,7 +3861,7 @@ bool ui_screen_draw_login_pin(void) {
     // Confirm PIN (all 4 digits must be entered)
     bool all_entered = true;
     for (int i = 0; i < 4; i++) {
-      if (context.ui_state.pin_entry_buffer[i] == 0) {
+      if (!context.ui_state.pin_entry_digit_set[i]) {
         all_entered = false;
         break;
       }

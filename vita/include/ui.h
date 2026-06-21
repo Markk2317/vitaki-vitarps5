@@ -28,6 +28,7 @@ typedef struct vita_chiaki_ui_state_t {
   bool pin_entry_incorrect;
   uint8_t pin_entry_buffer[4];
   int pin_entry_cursor;
+  bool pin_entry_digit_set[4];  // Track if user has touched each digit (independent of value)
 } VitaChiakiUIState;
 
 /// Identifiers of various widgets on the screen
