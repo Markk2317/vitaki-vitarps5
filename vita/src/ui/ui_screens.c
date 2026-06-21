@@ -3857,6 +3857,7 @@ bool ui_screen_draw_login_pin(void) {
   } else if (btn_pressed(SCE_CTRL_SQUARE)) {
     // Clear current digit
     context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor] = 0;
+    context.ui_state.pin_entry_digit_set[context.ui_state.pin_entry_cursor] = false;
   } else if (btn_pressed(SCE_CTRL_CROSS)) {
     // Confirm PIN (all 4 digits must be entered)
     bool all_entered = true;
