@@ -32,6 +32,7 @@
 
 #include "context.h"
 #include "host.h"
+#include "host_callbacks.h"
 #include "host_feedback.h"
 #include "psn_auth.h"
 #include "psn_remote.h"
