@@ -1,0 +1,40 @@
+--- a/lib/src/remote/holepunch.c
++++ b/lib/src/remote/holepunch.c
+@@ -130,7 +130,27 @@ typedef struct psn_remote_client_profile_t
+     const char *local_peer_platform;
+ } PsnRemoteClientProfile;
+ 
+-static const PsnRemoteClientProfile psn_remote_client_profile = {
++/* Platform-specific PSN client profile for proper authentication */
++#ifdef __PSVITA__
++/* PS Vita client profile - identifies as Vita to PSN servers */
++static const PsnRemoteClientProfile psn_remote_client_profile = {
++    .name = "vita-remote-play",
++    .ws_protocol = "np-pushpacket",
++    .ws_user_agent = "WebSocket++/0.8.2",
++    .app_type = "REMOTE_PLAY",
++    .app_version = "RemotePlay/1.0",
++    .keep_alive_status_type = "3",
++    .os_version = "PSVita/3.73",  /* Correct: Vita OS version */
++    .protocol_version = "2.1",
++    .reconnection = "false",
++    .command_user_agent = "RpNetHttpUtilImpl",
++    .start_client_type = "PSVita",  /* Correct: Vita client */
++    .wakeup_client_type = "PSVita",  /* Correct: Vita client */
++    .wakeup_protocol_version = "3.73",
++    .local_peer_platform = "REMOTE_PLAY",
++};
++#else
++/* Windows/other platforms client profile */
++static const PsnRemoteClientProfile psn_remote_client_profile = {
+     .name = "chiaki-ng-parity",
+     .ws_protocol = "np-pushpacket",
+     .ws_user_agent = "WebSocket++/0.8.2",
+@@ -145,6 +165,7 @@ static const PsnRemoteClientProfile psn_remote_client_profile = {
+     .wakeup_protocol_version = "10.0",
+     .local_peer_platform = "REMOTE_PLAY",
+ };
++#endif
+ 
+ // Endpoints we're using
+ static const char device_list_url_fmt[] = "https://web.np.playstation.com/api/cloudAssistedNavigation/v2/users/me/clients?platform=%s&includeFields=device&limit=10&offset=0";
