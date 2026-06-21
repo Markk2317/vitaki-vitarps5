@@ -1,0 +1,27 @@
+[submodule "test/munit"]
+	path = test/munit
+	url = https://github.com/nemequ/munit.git
+[submodule "third-party/nanopb"]
+	path = third-party/nanopb
+	url = https://github.com/nanopb/nanopb.git
+[submodule "third-party/jerasure"]
+	path = third-party/jerasure
+	url = https://git.sr.ht/~thestr4ng3r/jerasure
+[submodule "third-party/gf-complete"]
+	path = third-party/gf-complete
+	url = https://git.sr.ht/~thestr4ng3r/gf-complete
+[submodule "android/app/src/main/cpp/oboe"]
+	path = android/app/src/main/cpp/oboe
+	url = https://github.com/google/oboe
+[submodule "switch/borealis"]
+	path = switch/borealis
+	url = https://git.sr.ht/~thestr4ng3r/borealis
+[submodule "third-party/curl"]
+	path = third-party/curl
+	url = https://github.com/curl/curl
+[submodule "third-party/cpp-steam-tools"]
+	path = third-party/cpp-steam-tools
+	url = https://github.com/streetpea/cpp-steam-tools.git
+[submodule "vita/third_party/tomlc99"]
+	path = vita/third_party/tomlc99
+	url = https://github.com/cktan/tomlc99.git

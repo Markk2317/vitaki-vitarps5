@@ -1,0 +1,75 @@
+diff --git a/vita/src/video.c b/vita/src/video.c
+index original..fixed 100644
+--- a/vita/src/video.c
++++ b/vita/src/video.c
+@@ -1,6 +1,7 @@
+ #include "video.h"
+ #include "context.h"
+ #include <psp2/kernel/processmgr.h>
++#include <stdatomic.h>
+ 
+ enum ScreenDimensions {
+   SCREEN_WIDTH = 960,
+@@ -70,7 +71,7 @@ SceUID decoderblock = -1;
+ SceUID videodecblock = -1;
+ SceUID videodecUnmap = -1;
+ SceUIntVAddr videodecContext = 0;
+-static volatile bool frame_ready_for_display = false;
++static _Atomic(bool) frame_ready_for_display = false;
+ 
+ typedef struct {
+   unsigned int texture_width;
+
+diff --git a/vita/src/psn_remote.c b/vita/src/psn_remote.c
+index original..fixed 100644
+--- a/vita/src/psn_remote.c
++++ b/vita/src/psn_remote.c
+@@ -318,9 +318,16 @@ int psn_remote_prepare_connect_host(VitaChiakiHost *host
+   char selected_addr[PSN_SELECTED_ADDR_SIZE] = {0};
+   chiaki_get_ps_selected_addr(session, selected_addr);
+-  if (!selected_addr[0]) {
++  // Validate address: not empty and reasonable length (IPv6 max ~45 chars)
++  size_t addr_len = strlen(selected_addr);
++  if (!selected_addr[0] || addr_len > 45 || addr_len < 7) {
+     LOGE("PSN remote prepare failed: holepunch did not return a host address");
+-    psn_remote_set_error("PSN holepunch did not return a host address.");
++    if (addr_len > 45) {
++      psn_remote_set_error("PSN holepunch returned invalid address (too long).");
++    } else {
++      psn_remote_set_error("PSN holepunch did not return a valid host address.");
++    }
+     chiaki_holepunch_session_fini(session);
+     return 1;
+   }
+
+diff --git a/vita/src/host.c b/vita/src/host.c
+index original..fixed 100644
+--- a/vita/src/host.c
++++ b/vita/src/host.c
+@@ -268,7 +268,7 @@ int host_stream(VitaChiakiHost *host) {
+     ui_connection_set_stage(UI_CONNECTION_STAGE_PSN_CREATE_SESSION);
+ #if CHIAKI_CAN_USE_HOLEPUNCH
+-    if (psn_remote_prepare_connect_host(host, &holepunch_session) != 0) {
++    if (psn_remote_prepare_connect_host_with_timeout(host, &holepunch_session, 30) != 0) {
+       host_set_hint(host, psn_remote_last_error(), true, HINT_DURATION_CREDENTIAL_US);
+       goto cleanup;
+     }
+@@ -271,8 +271,8 @@ int host_stream(VitaChiakiHost *host) {
+   /* PSN/internet path: cap the start bitrate at PSN_REMOTE_BITRATE_CAP_KBPS
+    * (3.5 Mbps). The 540p preset default of 6 Mbps saturates Vita 802.11g
+    * Wi-Fi combined with a typical home upstream, and PS5 does not support
+    * mid-session bitrate renegotiation, so the start value is final. */
+-  if (psn_remote && profile.bitrate > PSN_REMOTE_BITRATE_CAP_KBPS) {
+-    LOGD("PSN path: clamping bitrate %u -> %u kbps", profile.bitrate, PSN_REMOTE_BITRATE_CAP_KBPS);
+-    profile.bitrate = PSN_REMOTE_BITRATE_CAP_KBPS;
++  if (psn_remote) {
++    uint32_t adaptive_cap = PSN_REMOTE_BITRATE_CAP_KBPS;
++    if (context.stream.packet_loss_percent > 5.0f) {
++      adaptive_cap = PSN_REMOTE_BITRATE_CAP_KBPS / 2;  // 1750 kbps
++      LOGD("PSN: reducing bitrate cap due to packet loss (%.1f%%)", context.stream.packet_loss_percent);
++    }
++    if (profile.bitrate > adaptive_cap) {
++      LOGD("PSN path: clamping bitrate %u -> %u kbps", profile.bitrate, adaptive_cap);
++      profile.bitrate = adaptive_cap;
++    }
+   }

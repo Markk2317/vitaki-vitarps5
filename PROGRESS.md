@@ -1,0 +1,171 @@
+## PROGRESS · Roadmap & Epics
+
+Last Updated: 2026-05-01 (Text rendering aliasing root cause fixed, Phase 2 unblocked)
+
+A living reference for larger initiatives. Update this document when we start or finish an epic, or when priorities shift.
+
+---
+
+### 1. UI Refactoring: Modularization *(COMPLETE ✅)*
+- **Objective:** Split monolithic `vita/src/ui.c` (4,776 lines) into 8 focused modules with clear interfaces and reduced coupling.
+- **Progress:** All 8 phases complete (100%)
+- **Completed Work:**
+  1. Phase 1: Directory structure and headers (260b163) - 2025-12-10
+  2. Phase 2: Graphics and animation extraction (97c4033) - 2025-12-11
+  3. Phase 3: Input and state management (ad89b6d, ~360 lines removed) - 2025-12-12
+  4. Phase 4: Reusable components extraction (d28046e, ~550 lines removed) - 2025-12-12
+  5. Phase 5: Navigation system extraction (74ce083, ~1,100 lines removed) - 2025-12-12
+  6. Phase 6: Console cards extraction (fd5d1f5, ~650 lines removed) - 2025-12-12
+  7. Phase 7: Screen implementations extraction (22bc26d, ~2,260 lines removed) - 2025-12-12
+  8. Phase 8: Final cleanup and verification (533eccf, -50 lines) - 2025-12-12
+- **Final ui_main.c Size:** ~580 lines (down from 4,776 - **88% reduction**)
+- **Final Architecture:** 8 specialized modules + 1 coordinator
+  - ui_graphics.c (~520 lines)
+  - ui_animation.c (~420 lines)
+  - ui_input.c (~300 lines)
+  - ui_state.c (~200 lines)
+  - ui_components.c (~650 lines)
+  - ui_navigation.c (~1,200 lines)
+  - ui_console_cards.c (~650 lines)
+  - ui_screens.c (~2,260 lines)
+  - ui_main.c (580 lines) - Coordinator
+- **Modules Created:** 8 specialized modules + 1 coordinator with 11 header files
+- **Quality Metrics:**
+  - Zero regression in build or functionality
+  - 100% functional equivalence with original monolithic ui.c
+  - Clear, documented public interfaces in all headers
+  - Near-zero global state dependencies in ui_main.c
+  - Enabled clean, modular development for future enhancements
+- **Status:** Ready for next development phase
+
+### 2. Issue #122 - UI Text Rendering Modernization *(In Progress)*
+- **Objective:** Modernize UI text rendering pipeline by integrating FreeType metrics, prewarm glyphs, and eliminate ad-hoc baseline offset math across the codebase.
+- **Progress:** Phase 1 + blocking root cause fix complete (60%); Phase 2 now unblocked and ready to begin.
+- **Completed Work:**
+  1. Phase 1: FreeType glyph atlas prewarm + metric helpers (PR #135 merged, `feat/ui-freetype-atlases-127`)
+     - Created `vita/include/ui/ui_text.h` + `vita/src/ui/ui_text.c` with prewarm infrastructure and metric-derived layout helpers
+     - Integrated prewarm into UI initialization; all 114 existing call sites left untouched
+     - Passed 8 code review rounds with all substantive feedback addressed
+  2. Root cause fix: Text aliasing (jaggy edges, horizontal stripes, baseline drift) resolved (PR #145, `fix/ui-text-per-glyph-integer-snap`)
+     - Identified root cause: vita2d's font glyph atlas was sampled with POINT (nearest-neighbor) filtering
+     - Vendored `third-party/libvita2d/vita2d_font.c` + `texture_atlas.c` with private headers
+     - Patched `texture_atlas.c` to use `SCE_GXM_TEXTURE_FILTER_LINEAR` for both min and mag on glyph atlas
+     - Reverted dee6831 per-glyph integer-snap workaround; restored kerning in whole-string vita2d calls
+     - Fixed CMakeLists.txt to include FreeType2 headers for vendored sources
+     - Build clean at v0.1.732
+- **Planned Work:**
+  3. Phase 2: Migrate 114 call sites to `ui_text_*` helpers (~2-3 week task)
+     - Replace `vita2d_font_draw_text(..., y+5)` with `ui_text_draw_centered_v()` + metric-derived math
+     - Scope: 7 files (`ui_screens.c`, `ui_components.c`, `ui_console_cards.c`, `ui_navigation.c`, `ui_state.c`, `ui.c`, `video_overlay.c`)
+     - Blocking condition: RESOLVED — aliasing root cause fixed; kerning preserved
+     - Plan: tracked in internal planning notes (see PR #135 and #136 for in-repo context)
+- **Related Subtasks (Parent Epic #122):**
+  - #125 Mipmaps for downscaled icons
+  - #126 Icons shipped at target sizes
+  - #128 Pre-rendered antialiased circle/indicator textures
+- **Status:** Phase 2 unblocked and ready to begin immediately.
+
+### 3. Remote Play Smoothness Initiative *(In Progress 🔄)*
+- **Objective:** Reduce latency, audio dropouts, and choppiness on both LAN and PSN-over-internet Remote Play through 17 Vita-feasible, userland-only improvements across three tiers.
+- **Motivation:** PSN remote play was recently added and is the choppiest codepath; LAN also has headroom to improve.
+- **Progress:** Research + feasibility validation complete (2026-05-01); implementation of T1-T6 starting now.
+- **Tier 1 (Quick wins):** T1 CPU affinity, T2 SO_SNDBUF, T3 PSN bitrate, T4 Senkusha fix, T5 WS ping throttle, T6 NAT burst reduction
+- **Tier 2 (chiaki-ng ports + architecture):** T7 AV reorder queue, T8 audio jitter buffer, T9 diagnostics overlay, T10 packet slab, T11 decode thread decoupling, T12 decoder flush
+- **Tier 3 (deferred):** T13 IP_TOS, T14 NEON FEC, T15 frame ring, T16 STUN config, T17 PSN flag cleanup
+- **Not planned (validated infeasible):** adaptive PS5 bitrate, TURN relay, async HW decoder API, >444MHz CPU, Wi-Fi 5GHz, 4th core, SO_PRIORITY
+- **Spec:** `docs/ai/REMOTE_PLAY_SMOOTHNESS_PLAN.md`
+- **Status:** T1-T6 in progress on worktrees.
+
+### 4. Latency Reduction Initiative *(Active)*
+- **Objective:** Bring Vita remote-play latency below 50 ms local / 100 ms remote by improving PS5 negotiation, Vita scheduling, and Wi-Fi guidance.
+- **Current Focus:** Instrumentation + bitrate handshake research (`docs/LATENCY_ANALYSIS.md`).
+- **Status:** In review - multiple latency improvements pending review (bitrate metrics, FPS instrumentation, StartBitrate handling)
+- **Upcoming Milestones:**
+  1. Capture requested vs. actual bitrate and timing metrics on hardware.
+  2. Patch `RP-StartBitrate`/LaunchSpec to request sub-3 Mbps streams reliably.
+  3. Surface user-facing controls/documentation for low-bandwidth mode.
+
+### 5. Controller Layout Redesign *(COMPLETE ✅)*
+- **Objective:** Redesign the controller configuration screen with an immersive visual layout featuring procedurally rendered Vita controller diagrams and interactive button mapping views.
+- **Progress:** All 3 phases complete (100%)
+- **Completed Work:**
+  1. Phase 1: Immersive layout implementation (2025-12-14) - Full 960×544 redesign with top bar, diagram, and preset system
+  2. Phase 2: Code review and refinements (2025-12-14) - DRY elimination, utility extraction, input conflict fixes, color correction, texture cleanup
+  3. Phase 3: Procedural diagram replacement (2025-12-14) - Replaced PNG assets with vita2d procedural rendering, 1.3MB VPK reduction
+- **Implementation Details:**
+  - Three-view system: Summary View (presets) + Front Mapping View + Back Mapping View
+  - Procedural vita2d rendering with ratio-based coordinate system for pixel-perfect scaling
+  - Full front view: device body, screen, D-pad, face buttons (△, ○, ×, □), analog sticks, shoulder buttons, system buttons
+  - Full back view: device body, rear touchpad with 4 interactive zones (UL, UR, LL, LR)
+  - Pulsing glow highlight system for active button/zone indication
+  - Interactive callout system showing button mappings (△ → □, etc.)
+  - D-pad navigation between controls in mapping views
+  - Touch input support for front/back view switching
+  - L/R preset cycling in Summary view
+  - 6 controller presets with full mapping definitions (Default, FPS, Racing, Fighting, Remote Play Classic, Custom)
+  - No external PNG dependencies - all graphics computed procedurally
+- **Code Review & Optimization Fixes Applied:**
+  - Color Definition Fixed: Changed `CTRL_PNG_TINT_COLOR` from `0xFF3490FF` to correct `0xFFFF9034` (PlayStation Blue)
+  - PNG Asset Removal: Eliminated texture loading/cleanup code from ui.c, ui_screens.c, and main.c
+  - Texture Cleanup: Removed `ui_diagram_free_textures()` call (no longer needed)
+  - Button Highlight Complete: All 16 button IDs (DPAD, TRIANGLE, CIRCLE, CROSS, SQUARE, L, R, LSTICK, RSTICK, PS, START, SELECT, RTOUCH_UL, RTOUCH_UR, RTOUCH_LL, RTOUCH_LR) mapped in procedural rendering
+  - Magic Numbers Extracted: Created ~97 ratio constants in ui_constants.h for automatic scaling
+  - Touch Constants Integrated: TOUCH_PANEL_WIDTH and TOUCH_PANEL_HEIGHT preserved
+  - Ratio-Based System: All coordinates use ratio values (0.0-1.0) for diagram dimensions, enabling arbitrary scaling
+  - Animation System: Flip (220ms), color tween (300ms), and pulse (1s cycle) animations preserved with procedural rendering
+  - VPK Size Optimization: Reduced from 3.9MB (PNG) to 2.6MB (procedural) - 1.3MB reduction, 33% smaller
+- **Files Created:**
+  - `vita/include/ui/ui_top_bar.h`, `vita/src/ui/ui_top_bar.c` - Top bar component (~240 lines)
+  - `vita/include/ui/ui_controller_diagram.h`, `vita/src/ui/ui_controller_diagram.c` - Diagram renderer (770 lines, fully procedural)
+- **Files Modified:**
+  - `vita/include/ui/ui_constants.h` - Added ~97 ratio-based coordinate constants for automatic scaling
+  - `vita/include/ui/ui_types.h`, `ui_focus.h`, `ui_graphics.h` - Support structures and utilities
+  - `vita/src/controller.c` - Preset definitions and mappings
+  - `vita/src/ui/ui_controller_diagram.c` - Complete rewrite to vita2d procedural rendering (no PNG textures)
+  - `vita/src/ui/ui_screens.c` - Controller screen handler, removed PNG texture loading
+  - `vita/src/ui/ui_graphics.c` - Added `ui_draw_rectangle_outline()` utility
+  - `vita/src/main.c` - Removed texture cleanup code
+  - `vita/CMakeLists.txt` - Removed PNG asset packaging, removed texture loading code
+- **Build Status:** VPK generated successfully at `build/vita/VitaRPS5.vpk` (2.6MB)
+- **Compiler Status:** Zero compiler warnings
+- **Performance:** Draw call budget maintained; ≥58 FPS target maintained
+- **VPK Size:** Reduced by 1.3MB (33% reduction) through PNG removal
+- **Status:** Production-ready with pixel-perfect scaling at any diagram size
+- **Future Enhancements:**
+  - Custom per-button persistence (beyond preset selection)
+  - Mapping popup full implementation (currently placeholder with show_mapping_popup field documented)
+
+### 6. Build & Release Reliability *(Ongoing)*
+- **Objective:** Keep Docker-based builds, automated releases, and deployment scripts stable.
+- **Focus Areas:** Monitor GitHub Actions release workflow, ensure `./tools/build.sh` handles new assets/configs, keep documentation current.
+- **Status:** Stable - new modular UI structure integrated into build system, assets pipeline validated
+
+---
+
+### Status Log
+| Date | Update | Owner |
+|------|--------|-------|
+| 2026-05-03 | PSN remote-play STUN DNS fix shipped (PR #158, v0.1.749) and header-hygiene followup PR submitted (v0.1.750): `vita_resolve_sin` / `vita_curl_add_resolve` forward-decl drift risk eliminated by splitting `vita_resolve.h` (curl-free) from `vita_dns.h` (curl-aware), wiring `vita/include/` as a PRIVATE chiaki-lib include dir for Vita, replacing hand-typed prototypes in `lib/src/remote/stun.h` and `holepunch.c` with real `#include` statements, and adding `<stdbool.h>` self-sufficiency + inet_ntop fallback logging. Root cause was getaddrinfo() EAI_NONAME regression in vitasdk libcurl 8.17 / GCC 15 toolchain rebuild (2026-05-02). | @mauricio-gg |
+| 2026-05-01 | Issue #122 text aliasing root cause fixed (PR #145) — vita2d font glyph atlas was sampled with POINT filtering, causing jaggy edges and baseline drift. Vendored libvita2d (`vita2d_font.c`, `texture_atlas.c`), patched to use LINEAR filter on atlas, reverted dee6831 per-glyph integer-snap workaround. Kerning restored via whole-string vita2d calls. Phase 2 (114 call-site migration) now unblocked. Build clean at v0.1.732. | @mauricio-gg |
+| 2026-04-14 | Issue #127 Phase 1 COMPLETE - FreeType glyph atlas prewarm module merged to main (PR #135, feature branch `feat/ui-freetype-atlases-127`). Created `ui_text.h/c` with metric helpers + prewarm infrastructure. All 114 existing `vita2d_font_draw_text()` call sites left untouched per Phase 1 scope. 8 code review rounds, all substantive feedback addressed. Pending: On-device smoke test of prewarm (first-frame pop-in check) before Phase 2 call-site migration. Phase 2 queued with plan file `prancy-sprouting-sunset.md`. | @mauricio-gg |
+| 2026-02-16 | Advanced codebase cleanup wave 1 (Vitaki delta-guided): added file inflation analysis tooling (`tools/analysis/compare_vitaki_delta.sh`), published implementation plan (`docs/ai/CODEBASE_CLEANUP_PLAN.md`), landed table-driven bool migration parsing + manual-host ownership fix in `vita/src/config.c`, extracted stream HUD overlays to `vita/src/video_overlay.c`, extracted host/manual-host storage utilities to `vita/src/host_storage.c`, extracted input-thread/controller-touch mapping logic to `vita/src/host_input.c`, extracted disconnect/quit-reason banner helpers to `vita/src/host_disconnect.c`, extracted loss-profile/saturation helper logic to `vita/src/host_loss_profile.c`, extracted hint/decoder-resync/loss-event handlers to `vita/src/host_feedback.c`, extracted reconnect recovery coordinator logic to `vita/src/host_recovery.c`, extracted stream metrics reset/latency diagnostics paths to `vita/src/host_metrics.c`, extracted registration/wakeup flow to `vita/src/host_registration.c`, extracted stream lifecycle/finalization helpers to `vita/src/host_lifecycle.c`, extracted `CHIAKI_EVENT_QUIT` handling/retry orchestration to `vita/src/host_quit.c`, extracted session/video callback plumbing to `vita/src/host_callbacks.c`, extracted registered/manual host parse+serialize logic from `vita/src/config.c` to `vita/src/config_hosts.c` (plus `vitarps5_tests` linkage update in `test/CMakeLists.txt`), added focused config migration coverage in `test/config_vita_tests.c` (legacy/root bool + latency mode), simplified `vita/src/config.c` parse flow with defaults/custom-map and resolution/FPS/latency helper functions, and deflated `vita/src/video.c` to ~641 lines by removing dead frame-pacer scaffolding, obsolete SPS/header processing path, unused hexdump/FPS helpers, and stale commented decode/setup experiments | @mauricio-gg |
+| 2026-02-11 | Started stability recovery initiative with split tracks: packet/reference-loss mitigation first on fresh `main` baseline, followed by decode/render architecture split on a separate branch; validation standardized on `./tools/build.sh --env testing` + log matrix | @mauricio-gg |
+| 2026-02-10 | Clarified Vita resolution policy in UI/runtime: unsupported legacy 720p/1080p values now display as effective 540p in settings/profile, and stream-start fallback logging is debug-level defensive messaging | @mauricio-gg |
+| 2026-02-10 | Settings UX simplified to a single scrollable list (removed extra settings tab, removed Settings-side Controller Map, moved Circle Button Confirm into main settings list) and nav menu close regressions fixed by making explicit collapse actions deterministic | @mauricio-gg |
+| 2025-12-14 | CONTROLLER LAYOUT REDESIGN 100% COMPLETE - Final polish batch: stadium shape fixed with procedural rendering (stadium_fill/outline functions), menu input bug resolved (handle_global_nav_shortcuts), all 3 phases finished | Code Review |
+| 2025-12-14 | CONTROLLER LAYOUT PHASE 3 COMPLETE - Procedural diagram implementation: PNG assets removed, ~97 ratio constants added, all 16 button IDs implemented, 1.3MB VPK reduction (3.9MB → 2.6MB), pixel-perfect scaling enabled | @mauricio-gg |
+| 2025-12-14 | CONTROLLER LAYOUT PHASE 2 CODE REVIEW SIGN-OFF - All fixes verified: color correction (#FF9034), texture cleanup, magic numbers extracted, touch constants added, button highlights complete, zero warnings | Code Review |
+| 2025-12-14 | CONTROLLER LAYOUT REDESIGN COMPLETE - Phase 1 (implementation) & Phase 2 (code review) finished with all deliverables | @mauricio-gg |
+| 2025-12-14 | CONTROLLER LAYOUT PHASE 2 COMPLETE - Code review fixes applied (DRY elimination, dead code removal, constant naming, input conflict resolution) | @mauricio-gg |
+| 2025-12-14 | Controller Layout Visual Fixes - Extracted ui_draw_rectangle_outline() utility, eliminated shoulder button DRY violation, fixed LEFT/RIGHT input conflict | Code Review |
+| 2025-12-12 | UI REFACTORING COMPLETE - All 8 phases finished (5,040 lines extracted, 88% reduction) | @mauricio-gg |
+| 2025-12-12 | Phase 5-8 complete - Navigation, cards, screens, and final cleanup | @mauricio-gg |
+| 2025-12-12 | UI_REFACTOR_SCOPE.md updated to v3.0 with full completion summary | Documentation |
+| 2025-12-12 | ROADMAP.md updated - All 8 phases marked complete, next phase defined | Documentation |
+| 2025-12-12 | PROGRESS.md updated - UI refactoring marked complete with final metrics | Documentation |
+| 2025-12-12 | Phase 4 complete - UI refactoring 50% done (910 lines extracted) | @mauricio-gg |
+| 2025-12-12 | Phases 1-4 UI refactoring documented in UI_REFACTOR_SCOPE.md v2 | Documentation |
+| 2025-12-11 | Phase 2 complete - Graphics and animation modules extracted | @mauricio-gg |
+| 2025-12-10 | Phase 1 complete - UI modular structure established | @mauricio-gg |
+
+Add entries whenever milestones move forward or new initiatives start.

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<livearea style="a4" format-ver="01.00" content-rev="1">
+    <livearea-background>
+        <image>bg.png</image>
+    </livearea-background>
+
+    <gate>
+        <startup-image>startup.png</startup-image>
+    </gate>
+
+    <frame id="frame3">
+        <liveitem>
+            <text origin="background" align="center" line-align="center" text-valign="bottom">
+                <str size="50" bold="on" shadow="off" color="#FFFFFF">VITARPS5</str>
+            </text>
+        </liveitem>
+    </frame>
+
+    <frame id="frame4">
+        <liveitem>
+            <text origin="background" line-break="on" pre-br="on" align="center" line-align="center" text-valign="top">
+                <str size="18" bold="off" shadow="off" color="#FFFFFF">AN OPEN SOURCE
+PS REMOTE PLAY CLIENT BASED
+ON VITAKI-FORK WITH MODERN UI</str>
+            </text>
+        </liveitem>
+    </frame>
+</livearea>

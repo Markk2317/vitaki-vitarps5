@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: LicenseRef-AGPL-3.0-only-OpenSSL
+
+#ifndef CHIAKI_VIDEORECEIVER_H
+#define CHIAKI_VIDEORECEIVER_H
+
+#include "common.h"
+#include "log.h"
+#include "video.h"
+#include "takion.h"
+#include "frameprocessor.h"
+#include "bitstream.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define CHIAKI_VIDEO_PROFILES_MAX 8
+
+typedef struct chiaki_video_receiver_t
+{
+	struct chiaki_session_t *session;
+	ChiakiLog *log;
+	ChiakiVideoProfile profiles[CHIAKI_VIDEO_PROFILES_MAX];
+	size_t profiles_count;
+	int profile_cur; // < 1 if no profile selected yet, else index in profiles
+
+	int32_t frame_index_cur; // frame that is currently being filled
+	int32_t frame_index_prev; // last frame that has been at least partially decoded
+	int32_t frame_index_prev_complete; // last frame that has been completely decoded
+	ChiakiFrameProcessor frame_processor;
+	ChiakiPacketStats *packet_stats;
+
+	int32_t frames_lost;
+	int32_t reference_frames[16];
+	ChiakiBitstream bitstream;
+	bool gap_report_pending;
+	uint16_t gap_report_start;
+	uint16_t gap_report_end;
+	uint64_t gap_report_deadline_ms;
+	uint16_t last_reported_corrupt_start;
+	uint16_t last_reported_corrupt_end;
+	bool cur_frame_seen_last_unit;
+	uint64_t cur_frame_first_packet_ms;
+	uint64_t stage_window_start_ms;
+	uint64_t stage_assemble_total_ms;
+	uint64_t stage_submit_total_ms;
+	uint32_t stage_window_frames;
+	uint32_t stage_window_drops;
+	bool idr_request_pending;            // IDR requested, tracks state (never blocks decode)
+	uint64_t idr_request_start_ms;       // Timestamp for timeout detection
+	uint32_t old_frame_rejects_window;   // Phase 1: count late-packet rejections per 1s window
+	uint64_t last_idr_request_ms;        // Phase 2: cooldown to prevent IDR flooding
+	uint32_t consecutive_missing_ref;    // Consecutive unrecovered missing-ref P-frames
+	uint32_t cascade_skip_count;         // Frames skipped during cascade (per 1s window, diagnostic only)
+	uint32_t cascade_reset_attempts;     // Local decode-chain resets while recovering from cascade
+
+	// --- Diagnostic instrumentation (D2: Frame Cadence Jitter) ---
+	uint64_t prev_frame_first_packet_ms;  // Previous frame's first-packet timestamp
+	uint64_t cadence_min_ms;              // Min inter-frame gap in current window
+	uint64_t cadence_max_ms;              // Max inter-frame gap in current window
+	uint64_t cadence_total_ms;            // Sum of inter-frame gaps in current window
+	uint32_t cadence_count;               // Number of gaps measured in current window
+	uint32_t cadence_max_alarm_streak;    // Consecutive windows with cadence_max > 80ms
+} ChiakiVideoReceiver;
+
+CHIAKI_EXPORT void chiaki_video_receiver_init(ChiakiVideoReceiver *video_receiver, struct chiaki_session_t *session, ChiakiPacketStats *packet_stats);
+CHIAKI_EXPORT void chiaki_video_receiver_fini(ChiakiVideoReceiver *video_receiver);
+
+/**
+ * Called after receiving the Stream Info Packet.
+ *
+ * @param video_receiver
+ * @param profiles Array of profiles. Ownership of the contained header buffers will be transferred to the ChiakiVideoReceiver!
+ * @param profiles_count must be <= CHIAKI_VIDEO_PROFILES_MAX
+ */
+CHIAKI_EXPORT void chiaki_video_receiver_stream_info(ChiakiVideoReceiver *video_receiver, ChiakiVideoProfile *profiles, size_t profiles_count);
+
+CHIAKI_EXPORT void chiaki_video_receiver_av_packet(ChiakiVideoReceiver *video_receiver, ChiakiTakionAVPacket *packet);
+
+static inline ChiakiVideoReceiver *chiaki_video_receiver_new(struct chiaki_session_t *session, ChiakiPacketStats *packet_stats)
+{
+	ChiakiVideoReceiver *video_receiver = CHIAKI_NEW(ChiakiVideoReceiver);
+	if(!video_receiver)
+		return NULL;
+	chiaki_video_receiver_init(video_receiver, session, packet_stats);
+	return video_receiver;
+}
+
+static inline void chiaki_video_receiver_free(ChiakiVideoReceiver *video_receiver)
+{
+	if(!video_receiver)
+		return;
+	chiaki_video_receiver_fini(video_receiver);
+	free(video_receiver);
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // CHIAKI_VIDEORECEIVER_H

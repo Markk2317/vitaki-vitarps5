@@ -1,0 +1,79 @@
+*~
+*.swp
+.idea
+build
+cmake-build-*
+/build_*
+/build-*
+/debug
+/Debug
+/release
+/Release
+.DS_Store
+*.AppImage
+appdir
+/ffmpeg*
+/Chiaki
+/SDL2-*
+/opus*
+/ffmpeg*
+/sdl2-*
+/protoc*
+/openssl*
+.vs
+CMakeSettings.json
+chiaki.rb
+*.jks
+secret.tar
+keystore-env.sh
+compile_commands.json
+.ccls-cache
+.cache/
+.gdb_history
+chiaki.conf
+/appimage
+.cache/
+/*.app
+/*.dmg
+*.vscode
+site/
+
+# Hidden directories and IDE files
+.claude/
+.vscode/
+.idea/
+.git/
+
+# Build artifacts
+*.vpk
+*.elf
+*.self
+*.velf
+vita/build/
+
+# Local config and runtime files
+*.json
+!package.json
+!tsconfig.json
+settings.cfg
+consoles.json
+profile.json
+*.psp2dmp
+*_vitarps5-testing*.log
+
+# Documentation artifacts
+docs/*.md
+!docs/ai/*.md
+!docs/BUILDING.md
+!docs/CONFIGURATION.md
+!docs/CRASH_ANALYSIS.md
+
+# Old project directories
+vitarps5/
+
+# AI Configs
+AGENTS.md
+CLAUDE.md
+
+# Git worktrees
+.worktrees/

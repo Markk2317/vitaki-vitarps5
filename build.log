@@ -1,0 +1,2 @@
+[0;34m[INFO][0m Loaded environment profile: .env.prod
+[0;31m[ERROR][0m Docker is not running. Please start Docker Desktop and try again.

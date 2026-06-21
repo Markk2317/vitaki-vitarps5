@@ -1,0 +1,732 @@
+/**
+ * @file ui.c
+ * @brief VitaRPS5 UI Coordinator - Main rendering loop and initialization
+ *
+ * This file serves as the central coordinator for VitaRPS5's modular UI system.
+ * It orchestrates the rendering pipeline, manages the main UI loop, and dispatches
+ * to specialized UI modules for specific functionality.
+ *
+ * Architecture:
+ * - ui_graphics.c: Low-level drawing primitives and shapes
+ * - ui_animation.c: Particle effects and animation timing
+ * - ui_input.c: Button/touch input handling and gesture detection
+ * - ui_state.c: UI state management and transitions
+ * - ui_components.c: Reusable UI widgets (toggles, dropdowns, popups)
+ * - ui_navigation.c: Wave navigation sidebar and menu system
+ * - ui_console_cards.c: Console selection card grid
+ * - ui_screens.c: Full-screen rendering (main, settings, profile, etc.)
+ *
+ * This coordinator:
+ * 1. Initializes vita2d, fonts, textures, and all UI modules
+ * 2. Runs the main rendering loop
+ * 3. Dispatches input to appropriate handlers
+ * 4. Routes rendering to the correct screen based on current state
+ * 5. Manages global overlays (debug menu, error popups, hints)
+ *
+ * All UI constants, types, and shared state are defined in ui/ui_*.h headers.
+ */
+
+#include <sys/param.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+#include <vita2d.h>
+#include <psp2/ctrl.h>
+#include <psp2/touch.h>
+#include <psp2/message_dialog.h>
+#include <psp2/registrymgr.h>
+#include <psp2/ime_dialog.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
+#include <chiaki/base64.h>
+#include <psp2/net/netctl.h>
+
+#include "context.h"
+#include "host.h"
+#include "ui.h"
+#include "util.h"
+#include "video.h"
+#include "psn_auth.h"
+#include "psn_remote.h"
+#include "ui/ui_graphics.h"
+#include "ui/ui_animation.h"
+#include "ui/ui_input.h"
+#include "ui/ui_state.h"
+#include "ui/ui_components.h"
+#include "ui/ui_navigation.h"
+#include "ui/ui_focus.h"
+#include "ui/ui_internal.h"
+#include "ui/ui_controller_diagram.h"
+#include "ui/ui_text.h"
+
+vita2d_font *font;
+vita2d_font *font_mono;
+vita2d_texture *img_ps4, *img_ps4_off, *img_ps4_rest, *img_ps5, *img_ps5_off, *img_ps5_rest,
+    *img_discovery_host;
+
+// VitaRPS5 UI textures
+vita2d_texture *symbol_triangle, *symbol_circle, *symbol_ex, *symbol_square;
+vita2d_texture *wave_top, *wave_bottom;
+vita2d_texture *ellipse_green, *ellipse_yellow, *ellipse_red;
+vita2d_texture *button_add_new;
+vita2d_texture *icon_play, *icon_settings, *icon_controller, *icon_profile;
+vita2d_texture *icon_button_triangle;
+vita2d_texture *background_gradient, *vita_rps5_logo;
+vita2d_texture *vita_front, *ps5_logo;
+
+// Input state (managed by ui_input.c - accessed via pointers for direct manipulation)
+static uint32_t *button_block_mask = NULL;
+static bool *touch_block_active = NULL;
+static bool *touch_block_pending_clear = NULL;
+
+// State management convenience macros (for legacy code compatibility)
+#define waking_start_time ui_state_get_waking_start_time_us()
+#define SET_waking_start_time(val) ui_state_set_waking_start_time_us(val)
+#define waking_wait_for_stream_us ui_state_get_waking_wait_for_stream_us()
+#define SET_waking_wait_for_stream_us(val) ui_state_set_waking_wait_for_stream_us(val)
+#define reconnect_start_time ui_state_get_reconnect_start_time()
+#define SET_reconnect_start_time(val) ui_state_set_reconnect_start_time(val)
+#define reconnect_animation_frame ui_state_get_reconnect_animation_frame()
+#define SET_reconnect_animation_frame(val) ui_state_set_reconnect_animation_frame(val)
+#define connection_overlay_active ui_connection_overlay_active()
+#define connection_overlay_stage ui_connection_stage()
+#define connection_thread_id (-1)  // Thread ID access not needed in ui.c (managed by ui_state.c)
+
+// Wave navigation constants moved to vita/include/ui/ui_constants.h
+// (removed duplicate definitions - canonical versions are in ui_constants.h)
+
+// Navigation state moved to ui_navigation.c
+// Access via ui_nav_* functions or extern declarations in ui_internal.h
+
+// HintsPopupState type moved to ui_types.h
+// HintsPopupState instance moved to ui_components.c
+
+// Console card system (updated per UI spec)
+// Console card constants moved to ui_constants.h
+
+// ConsoleCardInfo type moved to ui_types.h
+// selected_console_index moved to ui_console_cards.c
+// Console card cache moved to ui_console_cards.c
+// CardFocusAnimState moved to ui_console_cards.c
+
+// ToggleAnimationState type moved to ui_types.h
+// ToggleAnimationState instance moved to ui_components.c
+
+// Component functions moved to ui_components.c (accessible via ui_internal.h)
+static void render_loss_indicator_preview(void);
+
+// Navigation functions moved to ui_navigation.c (accessible via ui_internal.h)
+
+// Debug menu configuration moved to ui_components.c
+
+// Connection overlay, cooldown, thread management, and text cache moved to ui_state.c
+
+// Wave navigation sidebar uses simple colored bar (no animation)
+
+// PinEntryState type moved to ui_types.h
+
+// PIN entry state moved to ui_screens.c
+// cursor_blink_timer moved to ui_screens.c
+
+// FocusArea and UIHostAction enums moved to ui_types.h (included via ui_state.h)
+// current_focus and last_console_selection moved to ui_navigation.c
+
+#define MAX_TOOLTIP_CHARS 200
+char active_tile_tooltip_msg[MAX_TOOLTIP_CHARS] = {0};
+
+/// Types of screens that can be rendered
+// UIScreenType enum moved to ui_types.h (included via ui_state.h)
+
+// Initialize Yes and No button from settings (will be updated in init_ui)
+int SCE_CTRL_CONFIRM = SCE_CTRL_CROSS;
+int SCE_CTRL_CANCEL = SCE_CTRL_CIRCLE;
+char *confirm_btn_str = "Cross";
+char *cancel_btn_str = "Circle";
+
+// btn_pressed() and block_inputs_for_transition() moved to ui_input.c
+
+// ============================================================================
+// Navigation functions moved to ui_navigation.c
+// ============================================================================
+
+// Pill rendering, overlay, and touch functions moved to ui_navigation.c
+
+// Error popup and debug menu functions moved to ui_components.c
+
+static void render_loss_indicator_preview(void) {
+  if (context.stream.is_streaming)
+    return;
+  if (!context.config.show_network_indicator)
+    return;
+  uint64_t now_us = sceKernelGetProcessTimeWide();
+  if (!context.stream.loss_alert_until_us || now_us >= context.stream.loss_alert_until_us)
+    return;
+
+  uint64_t duration = context.stream.loss_alert_duration_us ? context.stream.loss_alert_duration_us
+                                                            : VIDEO_LOSS_ALERT_DEFAULT_US;
+  if (!duration)
+    duration = VIDEO_LOSS_ALERT_DEFAULT_US;
+  uint64_t remaining = context.stream.loss_alert_until_us - now_us;
+  float alpha_ratio = (float)remaining / (float)duration;
+  if (alpha_ratio < 0.0f)
+    alpha_ratio = 0.0f;
+  uint8_t alpha = (uint8_t)(alpha_ratio * 255.0f);
+
+  const char *headline = "Network Unstable";
+  int text_width = ui_text_width(font, FONT_SIZE_SMALL, headline);
+  int box_w = UI_LOSS_INDICATOR_PADDING_X * 2 + UI_LOSS_INDICATOR_DOT_RADIUS * 2 +
+              UI_LOSS_INDICATOR_DOT_TEXT_GAP + text_width;
+  int box_h = UI_LOSS_INDICATOR_PADDING_Y * 2 + FONT_SIZE_SMALL + 4;  // descender clearance
+  int box_x = VITA_WIDTH - box_w - UI_LOSS_INDICATOR_MARGIN;
+  int box_y = VITA_HEIGHT - box_h - UI_LOSS_INDICATOR_MARGIN;
+
+  uint8_t bg_alpha = (uint8_t)(alpha_ratio * 200.0f);
+  if (bg_alpha < 40)
+    bg_alpha = 40;
+  ui_draw_rounded_rect(box_x, box_y, box_w, box_h, box_h / 2, RGBA8(0, 0, 0, bg_alpha));
+
+  int dot_x = box_x + UI_LOSS_INDICATOR_PADDING_X;
+  int dot_y = box_y + box_h / 2;
+  vita2d_draw_fill_circle(dot_x, dot_y, UI_LOSS_INDICATOR_DOT_RADIUS,
+                          RGBA8(0xF4, 0x43, 0x36, alpha));
+
+  int text_x = dot_x + UI_LOSS_INDICATOR_DOT_RADIUS + UI_LOSS_INDICATOR_DOT_TEXT_GAP;
+  ui_text_draw_centered_v(font, text_x, box_y, box_h, RGBA8(0xFF, 0xFF, 0xFF, alpha),
+                          FONT_SIZE_SMALL, headline);
+}
+
+// Debug menu render and input functions moved to ui_components.c
+
+// ============================================================================
+// ANIMATION HELPERS
+// ============================================================================
+// Animation helper functions (lerp, ease_in_out_cubic) moved to ui_internal.h
+// Toggle animation functions moved to ui_components.c
+
+// ============================================================================
+// REUSABLE UI COMPONENTS
+// ============================================================================
+// Widget drawing functions (toggle, dropdown, tabs, status_dot, section_header) moved to
+// ui_components.c StatusType enum moved to ui_components.h as UIStatusType Spinner drawing moved to
+// ui_graphics.c (ui_draw_spinner)
+
+// ============================================================================
+// CONSOLE CARDS
+// ============================================================================
+// Map VitaChiakiHost to ConsoleCardInfo moved to ui_console_cards.c (ui_cards_map_host)
+// Console card functions moved to ui_console_cards.c (ui_cards_*)
+
+// ============================================================================
+// TEXTURE LOADING
+// ============================================================================
+
+/**
+ * load_textures() - Load all UI textures and assets into memory
+ *
+ * Loads console icons, UI symbols, navigation icons, and other graphical
+ * assets required for rendering the VitaRPS5 interface. Called once during
+ * UI initialization.
+ *
+ * Note: Textures are loaded from app0:/assets/ directory as defined in
+ * ui_constants.h. Failed loads result in NULL texture pointers which must
+ * be checked before rendering.
+ */
+void load_textures() {
+  img_ps4 = ui_load_png_linear(IMG_PS4_PATH);
+  img_ps4_off = ui_load_png_linear(IMG_PS4_OFF_PATH);
+  img_ps4_rest = ui_load_png_linear(IMG_PS4_REST_PATH);
+  img_ps5 = ui_load_png_linear(IMG_PS5_PATH);
+  img_ps5_off = ui_load_png_linear(IMG_PS5_OFF_PATH);
+  img_ps5_rest = ui_load_png_linear(IMG_PS5_REST_PATH);
+  img_discovery_host = ui_load_png_linear(IMG_DISCOVERY_HOST);
+
+  // Load VitaRPS5 UI assets
+  symbol_triangle = ui_load_png_linear("app0:/assets/symbol_triangle.png");
+  symbol_circle = ui_load_png_linear("app0:/assets/symbol_circle.png");
+  symbol_ex = ui_load_png_linear("app0:/assets/symbol_ex.png");
+  symbol_square = ui_load_png_linear("app0:/assets/symbol_square.png");
+  wave_top = ui_load_png_linear("app0:/assets/wave_top.png");
+  wave_bottom = ui_load_png_linear("app0:/assets/wave_bottom.png");
+  ellipse_green = ui_load_png_linear("app0:/assets/ellipse_green.png");
+  ellipse_yellow = ui_load_png_linear("app0:/assets/ellipse_yellow.png");
+  ellipse_red = ui_load_png_linear("app0:/assets/ellipse_red.png");
+  button_add_new = ui_load_png_linear("app0:/assets/button_add_new.png");
+
+  // Load navigation icons
+  icon_play = ui_load_png_linear("app0:/assets/icon_play.png");
+  icon_settings = ui_load_png_linear("app0:/assets/icon_settings.png");
+  icon_controller = ui_load_png_linear("app0:/assets/icon_controller.png");
+  icon_profile = ui_load_png_linear("app0:/assets/icon_profile.png");
+  icon_button_triangle = ui_load_png_linear("app0:/assets/icon_button_triangle.png");
+
+  // Load new professional assets
+  background_gradient = ui_load_png_linear("app0:/assets/background.png");
+  vita_rps5_logo = ui_load_png_linear("app0:/assets/Vita_RPS5_Logo.png");
+  vita_front = ui_load_png_linear("app0:/assets/Vita_Front.png");
+  ps5_logo = ui_load_png_linear("app0:/assets/PS5_logo.png");
+
+  // Controller diagram textures are managed separately by the controller
+  // diagram module, so load_textures() does not load them here.
+}
+
+// ============================================================================
+// LEGACY TOUCH HELPERS
+// ============================================================================
+// TODO: Move to ui_input.c in future cleanup
+
+/**
+ * is_touched() - Check if a rectangular region is currently touched
+ * @param x: Left edge of region
+ * @param y: Top edge of region
+ * @param width: Width of region
+ * @param height: Height of region
+ *
+ * Returns true if any active touch point falls within the specified region.
+ * This is a legacy helper that should be replaced with ui_input.c functions.
+ *
+ * Returns: true if region is touched, false otherwise
+ */
+bool is_touched(int x, int y, int width, int height) {
+  SceTouchData *tdf = &(context.ui_state.touch_state_front);
+  if (!tdf) {
+    return false;
+  }
+  // TODO: Do the coordinate systems really match?
+  return tdf->report->x > x && tdf->report->x <= x + width && tdf->report->y > y &&
+         tdf->report->y <= y + height;
+}
+
+// is_point_in_circle() and is_point_in_rect() moved to ui_input.c
+
+// ============================================================================
+// Touch input handler moved to ui_screens.c
+// ============================================================================
+
+// ============================================================================
+// PSN ACCOUNT INITIALIZATION
+// ============================================================================
+
+static bool load_psn_id_from_registry(bool force_reload) {
+  if (!force_reload && context.config.psn_account_id && strlen(context.config.psn_account_id) > 0) {
+    return true;
+  }
+
+  char acc_id_buf[8];
+  memset(acc_id_buf, 0, sizeof(acc_id_buf));
+
+  int reg_result = sceRegMgrGetKeyBin("/CONFIG/NP/", "account_id", acc_id_buf, sizeof(acc_id_buf));
+  if (reg_result < 0) {
+    LOGE("Failed to read PSN account_id from registry: 0x%08X", reg_result);
+    return false;
+  }
+
+  int b64_strlen = get_base64_size(sizeof(acc_id_buf));
+  char *new_psn_id = (char *)malloc((size_t)b64_strlen + 1);
+  if (!new_psn_id) {
+    LOGE("Failed to allocate memory for PSN account ID");
+    return false;
+  }
+
+  new_psn_id[b64_strlen] = '\0';
+  chiaki_base64_encode(acc_id_buf, sizeof(acc_id_buf), new_psn_id,
+                       get_base64_size(sizeof(acc_id_buf)));
+
+  if (context.config.psn_account_id) {
+    free(context.config.psn_account_id);
+  }
+  context.config.psn_account_id = new_psn_id;
+  LOGD("Loaded PSN account ID (base64, len=%d)", (int)strlen(new_psn_id));
+  return true;
+}
+
+/**
+ * load_psn_id_if_needed() - Load PSN account ID from Vita registry if missing.
+ */
+void load_psn_id_if_needed() {
+  load_psn_id_from_registry(false);
+}
+
+/**
+ * ui_reload_psn_account_id() - Force refresh PSN account ID from Vita registry.
+ */
+bool ui_reload_psn_account_id(void) {
+  return load_psn_id_from_registry(true);
+}
+
+// ============================================================================
+// SCREEN RENDERING
+// ============================================================================
+// All screen rendering functions moved to ui_screens.c:
+// - ui_screen_draw_main()
+// - ui_screen_draw_settings()
+// - ui_screen_draw_profile()
+// - ui_screen_draw_controller()
+// - ui_screen_draw_waking()
+// - ui_screen_draw_reconnecting()
+// - ui_screen_draw_registration()
+// - ui_screen_draw_stream()
+// - ui_screen_draw_messages()
+// ============================================================================
+
+// ============================================================================
+// UI INITIALIZATION
+// ============================================================================
+
+/**
+ * init_ui() - Initialize the VitaRPS5 UI system
+ *
+ * Performs one-time initialization of the UI subsystem:
+ * 1. Initializes vita2d graphics library
+ * 2. Loads all textures and fonts
+ * 3. Initializes touch screen input
+ * 4. Configures confirm/cancel button layout
+ * 5. Initializes all UI modules (input, screens, state, particles, cards)
+ *
+ * Must be called before draw_ui() main loop.
+ */
+void init_ui() {
+  int vita2d_init_ret =
+      vita2d_init_advanced_with_msaa(SCE_GXM_DEFAULT_PARAMETER_BUFFER_SIZE, SCE_GXM_MULTISAMPLE_4X);
+  if (vita2d_init_ret < 0) {
+    sceClibPrintf("[WARN] MSAA init failed (0x%08x), falling back to default init\n",
+                  vita2d_init_ret);
+    vita2d_init();
+  }
+  vita2d_set_clear_color(RGBA8(0x40, 0x40, 0x40, 0xFF));
+  load_textures();
+  ui_particles_init();  // Initialize VitaRPS5 particle background
+  ui_cards_init();      // Initialize console card system
+  font = vita2d_load_font_file("app0:/assets/fonts/Roboto-Regular.ttf");
+  font_mono = vita2d_load_font_file("app0:/assets/fonts/RobotoMono-Regular.ttf");
+
+  /* Initialize text helper: measures per-size metrics from the loaded fonts.
+   * Must happen after font load and before the first draw_ui() frame. */
+  ui_text_init(font, font_mono);
+
+  vita2d_set_vblank_wait(true);
+
+  // Initialize touch screen
+  sceTouchSetSamplingState(SCE_TOUCH_PORT_FRONT, SCE_TOUCH_SAMPLING_STATE_START);
+  sceTouchSetSamplingState(SCE_TOUCH_PORT_BACK, SCE_TOUCH_SAMPLING_STATE_START);
+  sceTouchEnableTouchForce(SCE_TOUCH_PORT_FRONT);
+
+  // Set yes/no buttons (circle = yes on Japanese vitas, typically)
+  SCE_CTRL_CONFIRM = context.config.circle_btn_confirm ? SCE_CTRL_CIRCLE : SCE_CTRL_CROSS;
+  SCE_CTRL_CANCEL = context.config.circle_btn_confirm ? SCE_CTRL_CROSS : SCE_CTRL_CIRCLE;
+  confirm_btn_str = context.config.circle_btn_confirm ? "Circle" : "Cross";
+  cancel_btn_str = context.config.circle_btn_confirm ? "Cross" : "Circle";
+
+  // Initialize UI modules
+  ui_input_init();
+  ui_screens_init();
+  ui_state_init();
+  ui_nav_init();    // Initialize navigation module
+  ui_focus_init();  // Initialize centralized focus manager (Phase 1)
+
+  // Get pointers to input state for direct manipulation (legacy compatibility)
+  button_block_mask = ui_input_get_button_block_mask_ptr();
+  touch_block_active = ui_input_get_touch_block_active_ptr();
+  touch_block_pending_clear = ui_input_get_touch_block_pending_clear_ptr();
+}
+
+// ============================================================================
+// MAIN UI LOOP
+// ============================================================================
+
+/**
+ * draw_ui() - Main UI rendering and event loop
+ *
+ * Infinite loop that:
+ * 1. Reads controller and touch input
+ * 2. Handles global popups (error, debug menu, hints)
+ * 3. Dispatches to the appropriate screen renderer
+ * 4. Renders navigation overlay and global UI elements
+ * 5. Swaps buffers and updates display
+ *
+ * This function never returns - it runs for the lifetime of the application.
+ * Streaming mode bypasses all rendering to minimize latency.
+ */
+void draw_ui() {
+  init_ui();
+  SceCtrlData ctrl;
+  memset(&ctrl, 0, sizeof(ctrl));
+
+  UIScreenType screen = UI_SCREEN_TYPE_MAIN;
+  context.ui_state.debug_menu_active = false;
+  context.ui_state.debug_menu_modal_pushed = false;
+  context.ui_state.debug_menu_selection = 0;
+  context.ui_state.error_popup_modal_pushed = false;
+  context.ui_state.register_host_modal_pushed = false;
+
+  load_psn_id_if_needed();
+  time_t startup_t = time(NULL);
+  uint64_t startup_unix = 0;
+  if (startup_t != (time_t)-1) {
+    startup_unix = (uint64_t)startup_t;
+    /* psn_remote_refresh_hosts() refreshes the OAuth token, fetches the PSN
+     * device list, and persists the config. It is a no-op when PSN internet
+     * mode is disabled. Doing this at startup means the user does not have to
+     * navigate to Profile -> Connection card and press X to see their PS5/PS4. */
+    psn_remote_refresh_hosts();
+    /* Drain any token refresh that happened but didn't persist (e.g. host
+     * fetch failed after a successful token refresh). */
+    if (context.config_persist_pending) {
+      if (!config_serialize(&context.config))
+        CHIAKI_LOGW(&(context.log), "PSN auth: failed to persist refreshed token at startup");
+      context.config_persist_pending = false;
+    }
+  } else {
+    CHIAKI_LOGW(&(context.log), "PSN auth: skipping startup host refresh — system clock not set");
+  }
+
+  /*
+   * Glyph atlas warm-up flag: set once here so the first main-loop iteration
+   * runs the prewarm pass inside the main drawing pair (after
+   * vita2d_start_drawing / vita2d_clear_screen, before the background draw).
+   * Keeping it inside the main pair avoids opening a second GXM scene in the
+   * same frame, which would risk a GXM assertion or scene corruption.
+   */
+  int ui_text_prewarm_pending = ui_text_needs_prewarm();
+
+  while (true) {
+    // --- Deferred session finalization (join + fini on UI thread) ---
+    // Must run BEFORE input processing to prevent reconnect races
+    if (context.stream.session_finalize_pending) {
+      host_finalize_deferred_session();
+    }
+
+    /* Drain any pending config persist on every idle frame. config_persist_pending
+     * can be set by any refresh path (startup, idle timer, pre-stream token check),
+     * so draining it here — outside the 60s gate — ensures a power-cycle right after
+     * any refresh still saves the new token. */
+    if (!context.stream.is_streaming && context.config_persist_pending) {
+      if (!config_serialize(&context.config))
+        CHIAKI_LOGW(&(context.log), "PSN auth: failed to persist refreshed token");
+      context.config_persist_pending = false;
+    }
+
+    /* Proactively refresh PSN token once per minute while idle so it never
+     * expires unnoticed between user actions. Skip during streaming to avoid
+     * network contention with the media path. */
+    if (!context.stream.is_streaming) {
+      static uint64_t last_token_check_unix = 0;
+      time_t t = time(NULL);
+      if (t != (time_t)-1) {
+        uint64_t now_unix = (uint64_t)t;
+        if (last_token_check_unix == 0)
+          last_token_check_unix = startup_unix;
+        if (now_unix - last_token_check_unix >= 60) {
+          last_token_check_unix = now_unix;
+          psn_auth_refresh_token_if_needed(now_unix, false);
+        }
+      }  /* if (t != (time_t)-1) */
+    }  /* if (!context.stream.is_streaming) */
+
+    /* Immediate WiFi reconnect token refresh. */
+    if (!context.stream.is_streaming) {
+      static int prev_net_ctl_state = -1;
+      int cur_net_ctl_state = -1;
+      if (sceNetCtlInetGetState(&cur_net_ctl_state) >= 0) {
+        if (prev_net_ctl_state >= 0 &&
+            prev_net_ctl_state != 3 /* SCE_NETCTL_STATE_CONNECTED */ &&
+            cur_net_ctl_state  == 3) {
+          time_t t_nc = time(NULL);
+          if (t_nc != (time_t)-1) {
+            LOGD("UI: WiFi reconnected — forcing PSN token refresh");
+            psn_auth_on_network_change((uint64_t)t_nc);
+          }
+        }
+        prev_net_ctl_state = cur_net_ctl_state;
+      }
+    }
+    // Always read controller input - input thread uses Ext2 variant to access controller
+    // independently
+    if (!sceCtrlReadBufferPositive(0, &ctrl, 1)) {
+      // Try again...
+      LOGE("Failed to get controller state");
+      continue;
+    }
+    context.ui_state.old_button_state = context.ui_state.button_state;
+    context.ui_state.button_state = ctrl.buttons;
+    *button_block_mask &= context.ui_state.button_state;
+
+    // Update Cross button hold timing before any input handler runs
+    ui_input_update_hold_tracking();
+
+    // Get current touch state
+    sceTouchPeek(SCE_TOUCH_PORT_FRONT, &(context.ui_state.touch_state_front), 1);
+
+    // Allow popup dismissal to capture inputs before we process other widgets
+    handle_error_popup_input();
+    handle_debug_menu_input();
+
+    if (debug_menu_enabled && !context.stream.is_streaming && !context.ui_state.debug_menu_active) {
+      if ((context.ui_state.button_state & DEBUG_MENU_COMBO_MASK) == DEBUG_MENU_COMBO_MASK &&
+          (context.ui_state.old_button_state & DEBUG_MENU_COMBO_MASK) != DEBUG_MENU_COMBO_MASK) {
+        open_debug_menu();
+      }
+    }
+
+    // handle invalid items
+    int this_active_item = context.ui_state.next_active_item;
+    if (this_active_item == -1) {
+      this_active_item = context.ui_state.active_item;
+    }
+    if (this_active_item > -1) {
+      if (this_active_item & UI_MAIN_WIDGET_HOST_TILE) {
+        if (context.num_hosts == 0) {
+          // return to toolbar
+          context.ui_state.next_active_item = UI_MAIN_WIDGET_SETTINGS_BTN;
+        } else {
+          int host_j = this_active_item - UI_MAIN_WIDGET_HOST_TILE;
+          if (host_j >= context.num_hosts) {
+            context.ui_state.next_active_item = UI_MAIN_WIDGET_HOST_TILE | (context.num_hosts - 1);
+          }
+        }
+      }
+    }
+
+    if (context.ui_state.next_active_item >= 0) {
+      context.ui_state.active_item = context.ui_state.next_active_item;
+      context.ui_state.next_active_item = -1;
+    }
+
+    // Skip ALL rendering when streaming - match ywnico pattern
+    if (!context.stream.is_streaming) {
+      if (context.stream.reconnect_overlay_active) {
+        screen = UI_SCREEN_TYPE_RECONNECTING;
+      } else if (screen == UI_SCREEN_TYPE_RECONNECTING) {
+        screen = UI_SCREEN_TYPE_MAIN;
+      }
+
+      vita2d_start_drawing();
+      vita2d_clear_screen();
+
+      /*
+       * One-shot atlas prewarm: runs inside the main drawing pair so there is
+       * only ever one vita2d_start_drawing / vita2d_end_drawing open at a time.
+       * Prewarm draws are at alpha=0 and off-screen (UI_FONT_PREWARM_OFFSCREEN_X/Y)
+       * so they produce no visible output even on the first rendered frame.
+       */
+      if (ui_text_prewarm_pending) {
+        ui_text_prewarm();
+        ui_text_prewarm_pending = 0;
+      }
+
+      // Draw full-screen background - nav is a pure overlay
+      if (background_gradient) {
+        vita2d_draw_texture_part(background_gradient, 0, 0, 0, 0, VITA_WIDTH, VITA_HEIGHT);
+      } else {
+        vita2d_draw_rectangle(0, 0, VITA_WIDTH, VITA_HEIGHT, UI_COLOR_BACKGROUND);
+      }
+
+      // Wave navigation area removed - nav is a pure overlay with no background
+
+      // Focus overlay moved to after screen rendering for correct z-order
+
+      // Draw Vita RPS5 logo in top-right corner for professional branding (small with transparency)
+      if (vita_rps5_logo) {
+        int logo_w = vita2d_texture_get_width(vita_rps5_logo);
+        int logo_h = vita2d_texture_get_height(vita_rps5_logo);
+        float logo_scale = 0.1f;  // 10% of original size
+        int scaled_w = (int)(logo_w * logo_scale);
+        int scaled_h = (int)(logo_h * logo_scale);
+        int logo_x = VITA_WIDTH - scaled_w - 20;  // 20px margin from right
+        int logo_y = 20;                          // 20px margin from top
+
+        // Draw with 50% transparency (alpha = 128)
+        vita2d_draw_texture_tint_scale(vita_rps5_logo, logo_x, logo_y, logo_scale, logo_scale,
+                                       RGBA8(255, 255, 255, 128));
+      }
+
+      UIScreenType prev_screen = screen;
+      UIScreenType next_screen = screen;
+
+      // Handle zone-crossing navigation (LEFT/RIGHT between nav bar and content)
+      // This must happen before screen-specific input handling
+      ui_focus_handle_zone_crossing(screen);
+
+      // Render the current screen
+      if (screen == UI_SCREEN_TYPE_MAIN) {
+        next_screen = ui_screen_draw_main();
+      } else if (screen == UI_SCREEN_TYPE_REGISTER_HOST) {
+        context.ui_state.next_active_item = (UI_MAIN_WIDGET_TEXT_INPUT | 0);
+        if (!ui_screen_draw_registration()) {
+          next_screen = UI_SCREEN_TYPE_MAIN;
+        }
+      } else if (screen == UI_SCREEN_TYPE_MESSAGES) {
+        if (!ui_screen_draw_messages()) {
+          next_screen = UI_SCREEN_TYPE_MAIN;
+        }
+      } else if (screen == UI_SCREEN_TYPE_STREAM) {
+        if (!ui_screen_draw_stream()) {
+          next_screen = UI_SCREEN_TYPE_MAIN;
+        }
+      } else if (screen == UI_SCREEN_TYPE_WAKING) {
+        next_screen = ui_screen_draw_waking();
+      } else if (screen == UI_SCREEN_TYPE_RECONNECTING) {
+        next_screen = ui_screen_draw_reconnecting();
+      } else if (screen == UI_SCREEN_TYPE_SETTINGS) {
+        if (context.ui_state.active_item != (UI_MAIN_WIDGET_TEXT_INPUT | 2)) {
+          context.ui_state.next_active_item = (UI_MAIN_WIDGET_TEXT_INPUT | 1);
+        }
+        next_screen = ui_screen_draw_settings();
+      } else if (screen == UI_SCREEN_TYPE_PROFILE) {
+        // Phase 2: Profile & Registration screen
+        next_screen = ui_screen_draw_profile();
+      } else if (screen == UI_SCREEN_TYPE_CONTROLLER) {
+        // Phase 2: Controller Configuration screen
+        next_screen = ui_screen_draw_controller();
+      }
+
+      if (next_screen != prev_screen) {
+        block_inputs_for_transition();
+        // Menu stays in current state - user controls collapse via Triangle or content tap
+
+        // Handle modal focus for PIN entry screen only
+        // Connection screens (WAKING/RECONNECTING) are handled by ui_state.c
+        // Pop modal when leaving PIN entry screen
+        if (prev_screen == UI_SCREEN_TYPE_REGISTER_HOST &&
+            context.ui_state.register_host_modal_pushed) {
+          ui_focus_pop_modal();
+          context.ui_state.register_host_modal_pushed = false;
+        }
+
+        // Push modal when entering PIN entry screen
+        if (next_screen == UI_SCREEN_TYPE_REGISTER_HOST &&
+            !context.ui_state.register_host_modal_pushed) {
+          ui_focus_push_modal();
+          context.ui_state.register_host_modal_pushed = true;
+        }
+      }
+      screen = next_screen;
+
+      // Render focus overlay after all screen content (correct z-order)
+      ui_nav_render_content_overlay();
+
+      // Render navigation menu overlay (on top of tint)
+      render_wave_navigation();
+
+      // Render hints system (indicator + popup)
+      render_hints_indicator();
+      render_hints_popup();
+
+      render_loss_indicator_preview();
+      render_connect_popup();
+      render_debug_menu();
+      render_error_popup();
+      vita2d_end_drawing();
+      vita2d_common_dialog_update();
+      vita2d_swap_buffers();
+    } else {
+      // Streaming active — render decoded frames from the UI thread.
+      // This decouples GPU display from the Takion network receive thread,
+      // freeing ~15-20ms per frame on the decode path.
+      if (!vita_video_render_latest_frame()) {
+        sceKernelDelayThread(1000);  // 1ms sleep to avoid busy-spin
+      }
+    }
+  }
+}
