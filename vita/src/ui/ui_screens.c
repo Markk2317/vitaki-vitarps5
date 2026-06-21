@@ -3761,6 +3761,120 @@ bool ui_screen_draw_registration(void) {
   return true;
 }
 
+/**
+ * Draw the Login PIN entry screen (4-digit console PIN).
+ * This is displayed when the console has a lock screen and requires PIN entry.
+ * @return whether the dialog should keep rendering
+ */
+bool ui_screen_draw_login_pin(void) {
+  if (!context.ui_state.pin_entry_active) {
+    return false;
+  }
+
+  // Card dimensions (similar to registration but slightly smaller for 4 digits)
+  int card_w = 600;
+  int card_h = 350;
+  int card_x = (VITA_WIDTH - card_w) / 2;
+  int card_y = (VITA_HEIGHT - card_h) / 2;
+
+  // Draw card background
+  ui_draw_card_with_shadow(card_x, card_y, card_w, card_h, 12, UI_COLOR_CARD_BG);
+
+  // Title
+  const char *title = context.ui_state.pin_entry_incorrect ? "Incorrect PIN" : "Enter Console PIN";
+  ui_text_draw(font, card_x + 20, card_y + 40, UI_COLOR_TEXT_PRIMARY, FONT_SIZE_HEADER, title);
+
+  // Error message if PIN was incorrect
+  if (context.ui_state.pin_entry_incorrect) {
+    ui_text_draw(font, card_x + 20, card_y + 90, UI_COLOR_ERROR, FONT_SIZE_CARD_TITLE,
+                 "Please try again");
+  } else {
+    ui_text_draw(font, card_x + 20, card_y + 90, UI_COLOR_TEXT_SECONDARY, FONT_SIZE_CARD_TITLE,
+                 "Enter 4-digit PIN from console lock screen");
+  }
+
+  // PIN digit boxes (4 digits, centered)
+  int pin_digit_width = 50;
+  int pin_digit_height = 60;
+  int pin_spacing = 15;
+  int pin_total_width = (pin_digit_width * 4) + (pin_spacing * 3);
+  int pin_start_x = card_x + (card_w - pin_total_width) / 2;
+  int pin_y = card_y + 160;
+
+  for (int i = 0; i < 4; i++) {
+    int x = pin_start_x + i * (pin_digit_width + pin_spacing);
+    uint8_t digit = context.ui_state.pin_entry_buffer[i];
+    bool is_current = (context.ui_state.pin_entry_cursor == i);
+    bool has_value = (digit > 0 || i < context.ui_state.pin_entry_cursor);
+
+    // Draw digit box
+    uint32_t box_color = is_current ? UI_COLOR_PRIMARY_BLUE : UI_COLOR_BORDER;
+    uint32_t text_color = has_value ? UI_COLOR_TEXT_PRIMARY : UI_COLOR_TEXT_SECONDARY;
+
+    // Box background
+    vita2d_draw_rectangle(x, pin_y, pin_digit_width, pin_digit_height, UI_COLOR_SURFACE);
+    // Box border
+    vita2d_draw_rectangle(x, pin_y, pin_digit_width, 2, box_color);
+    vita2d_draw_rectangle(x, pin_y + pin_digit_height - 2, pin_digit_width, 2, box_color);
+    vita2d_draw_rectangle(x, pin_y, 2, pin_digit_height, box_color);
+    vita2d_draw_rectangle(x + pin_digit_width - 2, pin_y, 2, pin_digit_height, box_color);
+
+    // Draw digit or placeholder
+    if (has_value && digit > 0) {
+      char digit_str[2] = {0};
+      digit_str[0] = '0' + digit;
+      ui_text_draw(font, x + pin_digit_width / 2 - 5, pin_y + pin_digit_height / 2 - 10,
+                   text_color, FONT_SIZE_HEADER, digit_str);
+    } else if (is_current) {
+      // Show cursor for current digit
+      ui_text_draw(font, x + pin_digit_width / 2 - 3, pin_y + pin_digit_height / 2 - 10,
+                   UI_COLOR_PRIMARY_BLUE, FONT_SIZE_HEADER, "_");
+    }
+  }
+
+  // Navigation hints
+  ui_text_draw(font, card_x + 20, card_y + card_h - 50, UI_COLOR_TEXT_SECONDARY,
+               FONT_SIZE_SUBHEADER, "Left/Right: Move   Up/Down: Change   X: Confirm");
+
+  // Input handling
+  if (btn_pressed(SCE_CTRL_LEFT)) {
+    if (context.ui_state.pin_entry_cursor > 0) {
+      context.ui_state.pin_entry_cursor--;
+    }
+  } else if (btn_pressed(SCE_CTRL_RIGHT)) {
+    if (context.ui_state.pin_entry_cursor < 3) {
+      context.ui_state.pin_entry_cursor++;
+    }
+  } else if (btn_pressed(SCE_CTRL_UP)) {
+    uint8_t *digit = &context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor];
+    *digit = (*digit + 1) % 10;
+  } else if (btn_pressed(SCE_CTRL_DOWN)) {
+    uint8_t *digit = &context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor];
+    *digit = (*digit + 9) % 10;  // Equivalent to -1 mod 10
+  } else if (btn_pressed(SCE_CTRL_SQUARE)) {
+    // Clear current digit
+    context.ui_state.pin_entry_buffer[context.ui_state.pin_entry_cursor] = 0;
+  } else if (btn_pressed(SCE_CTRL_CROSS)) {
+    // Confirm PIN (all 4 digits must be entered)
+    bool all_entered = true;
+    for (int i = 0; i < 4; i++) {
+      if (context.ui_state.pin_entry_buffer[i] == 0) {
+        all_entered = false;
+        break;
+      }
+    }
+    if (all_entered) {
+      LOGD("User entered PIN: %d%d%d%d", context.ui_state.pin_entry_buffer[0],
+           context.ui_state.pin_entry_buffer[1], context.ui_state.pin_entry_buffer[2],
+           context.ui_state.pin_entry_buffer[3]);
+      host_submit_login_pin();
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /// Render the current frame of an active stream
 /// @return whether the stream should keep rendering
 bool ui_screen_draw_stream(void) {

@@ -34,6 +34,7 @@ typedef enum ui_screen_type_t {
   UI_SCREEN_TYPE_MESSAGES,
   UI_SCREEN_TYPE_PROFILE,     // Phase 2: Profile & Registration screen
   UI_SCREEN_TYPE_CONTROLLER,  // Phase 2: Controller Configuration screen
+  UI_SCREEN_TYPE_LOGIN_PIN,   // Login PIN entry screen (4-digit console PIN)
 } UIScreenType;
 
 /**

@@ -679,6 +679,11 @@ void draw_ui() {
       } else if (screen == UI_SCREEN_TYPE_CONTROLLER) {
         // Phase 2: Controller Configuration screen
         next_screen = ui_screen_draw_controller();
+      } else if (screen == UI_SCREEN_TYPE_LOGIN_PIN) {
+        // Login PIN entry screen (4-digit console PIN)
+        if (!ui_screen_draw_login_pin()) {
+          next_screen = UI_SCREEN_TYPE_MAIN;
+        }
       }
 
       if (next_screen != prev_screen) {

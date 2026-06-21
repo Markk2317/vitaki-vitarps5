@@ -103,6 +103,13 @@ UIScreenType ui_screen_draw_reconnecting(void);
 bool ui_screen_draw_registration(void);
 
 /**
+ * Render the login PIN entry screen (4-digit console PIN)
+ * Displayed when console has a lock screen and requires PIN entry
+ * @return true if PIN entry should continue, false if canceled
+ */
+bool ui_screen_draw_login_pin(void);
+
+/**
  * Render the stream overlay (during active streaming)
  * Shows latency stats, network indicators, and stream info
  * @return true to continue streaming, false to exit

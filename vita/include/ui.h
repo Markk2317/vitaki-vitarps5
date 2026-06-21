@@ -23,6 +23,11 @@ typedef struct vita_chiaki_ui_state_t {
   bool debug_menu_modal_pushed;
   bool register_host_modal_pushed;
   int debug_menu_selection;
+  // Login PIN entry state
+  bool pin_entry_active;
+  bool pin_entry_incorrect;
+  uint8_t pin_entry_buffer[4];
+  int pin_entry_cursor;
 } VitaChiakiUIState;
 
 /// Identifiers of various widgets on the screen

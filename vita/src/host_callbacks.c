@@ -12,6 +12,22 @@
 #define LOSS_RESTART_STARTUP_SOFT_GRACE_US (2500 * 1000ULL)
 #define LOSS_RESTART_STARTUP_HARD_GRACE_US (20 * 1000 * 1000ULL)
 
+/**
+ * Handle LOGIN_PIN_REQUEST event from console.
+ * Activates PIN entry UI and waits for user input.
+ */
+static void host_handle_login_pin_request(ChiakiEvent *event) {
+  bool pin_incorrect = event->login_pin_request.pin_incorrect;
+  
+  // Initialize PIN entry state
+  context.ui_state.pin_entry_active = true;
+  context.ui_state.pin_entry_incorrect = pin_incorrect;
+  context.ui_state.pin_entry_cursor = 0;
+  memset(context.ui_state.pin_entry_buffer, 0, sizeof(context.ui_state.pin_entry_buffer));
+  
+  LOGD("PIN entry activated (incorrect=%s)", pin_incorrect ? "true" : "false");
+}
+
 void host_event_cb(ChiakiEvent *event, void *user) {
   switch (event->type) {
     case CHIAKI_EVENT_CONNECTED:
@@ -46,7 +62,9 @@ void host_event_cb(ChiakiEvent *event, void *user) {
       }
       break;
     case CHIAKI_EVENT_LOGIN_PIN_REQUEST:
-      LOGD("EventCB CHIAKI_EVENT_LOGIN_PIN_REQUEST");
+      LOGD("EventCB CHIAKI_EVENT_LOGIN_PIN_REQUEST (incorrect=%s)",
+           event->login_pin_request.pin_incorrect ? "true" : "false");
+      host_handle_login_pin_request(event);
       break;
     case CHIAKI_EVENT_RUMBLE:
       LOGD("EventCB CHIAKI_EVENT_RUMBLE");
@@ -82,4 +100,38 @@ bool host_video_cb(uint8_t *buf, size_t buf_size, int32_t frames_lost, bool fram
   }
   host_metrics_update_latency();
   return true;
+}
+
+
+/**
+ * Submit the entered PIN to the Chiaki session.
+ * Converts the 4-digit PIN buffer to bytes and sends it to the console.
+ * 
+ * PIN Encoding: ASCII (0x31-0x39 for digits "1"-"9", 0x30 for "0")
+ * This is the most common encoding for PIN transmission in remote play protocols.
+ */
+void host_submit_login_pin(void) {
+  if (!context.ui_state.pin_entry_active) {
+    LOGW("PIN submission attempted but PIN entry not active");
+    return;
+  }
+  
+  // Convert 4-digit PIN buffer to ASCII bytes
+  // Example: buffer [1,2,3,4] → bytes [0x31, 0x32, 0x33, 0x34]
+  uint8_t pin_bytes[4];
+  for (int i = 0; i < 4; i++) {
+    // Convert digit (0-9) to ASCII character code (0x30-0x39)
+    pin_bytes[i] = 0x30 + context.ui_state.pin_entry_buffer[i];
+  }
+  
+  LOGD("Submitting PIN to console (bytes: %02x %02x %02x %02x)",
+       pin_bytes[0], pin_bytes[1], pin_bytes[2], pin_bytes[3]);
+  
+  ChiakiErrorCode err = chiaki_session_set_login_pin(&context.stream.session, pin_bytes, 4);
+  if (err != CHIAKI_ERR_SUCCESS) {
+    LOGE("Failed to set login PIN: %s", chiaki_error_string(err));
+  }
+  
+  // Deactivate PIN entry UI
+  context.ui_state.pin_entry_active = false;
 }
