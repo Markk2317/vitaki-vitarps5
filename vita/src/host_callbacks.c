@@ -112,7 +112,7 @@ bool host_video_cb(uint8_t *buf, size_t buf_size, int32_t frames_lost, bool fram
  */
 void host_submit_login_pin(void) {
   if (!context.ui_state.pin_entry_active) {
-    LOGW("PIN submission attempted but PIN entry not active");
+    LOGD("PIN submission attempted but PIN entry not active");
     return;
   }
   
