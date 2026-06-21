@@ -171,6 +171,6 @@ int main(int argc, char *argv[]) {
   }
 
   // Clean up finalization mutex
-  chiaki_mutex1_fini(&context.stream.finalization_mutex);
+  chiaki_mutex_fini(&context.stream.finalization_mutex);
   LOGD("Finalization mutex destroyed");
 }
