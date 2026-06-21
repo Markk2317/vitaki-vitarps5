@@ -644,6 +644,11 @@ void draw_ui() {
       UIScreenType prev_screen = screen;
       UIScreenType next_screen = screen;
 
+      // Check if PIN entry should be shown (takes priority over other screens)
+      if (context.ui_state.pin_entry_active && screen != UI_SCREEN_TYPE_LOGIN_PIN) {
+        screen = UI_SCREEN_TYPE_LOGIN_PIN;
+      }
+
       // Handle zone-crossing navigation (LEFT/RIGHT between nav bar and content)
       // This must happen before screen-specific input handling
       ui_focus_handle_zone_crossing(screen);
