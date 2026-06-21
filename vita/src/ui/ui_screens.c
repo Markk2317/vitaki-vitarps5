@@ -3786,7 +3786,7 @@ bool ui_screen_draw_login_pin(void) {
 
   // Error message if PIN was incorrect
   if (context.ui_state.pin_entry_incorrect) {
-    ui_text_draw(font, card_x + 20, card_y + 90, UI_COLOR_ERROR, FONT_SIZE_CARD_TITLE,
+    ui_text_draw(font, card_x + 20, card_y + 90, UI_COLOR_STATUS_UNAVAILABLE, FONT_SIZE_CARD_TITLE,
                  "Please try again");
   } else {
     ui_text_draw(font, card_x + 20, card_y + 90, UI_COLOR_TEXT_SECONDARY, FONT_SIZE_CARD_TITLE,
@@ -3808,11 +3808,11 @@ bool ui_screen_draw_login_pin(void) {
     bool has_value = (digit > 0 || i < context.ui_state.pin_entry_cursor);
 
     // Draw digit box
-    uint32_t box_color = is_current ? UI_COLOR_PRIMARY_BLUE : UI_COLOR_BORDER;
+    uint32_t box_color = is_current ? UI_COLOR_PRIMARY_BLUE : UI_COLOR_SHADOW;
     uint32_t text_color = has_value ? UI_COLOR_TEXT_PRIMARY : UI_COLOR_TEXT_SECONDARY;
 
     // Box background
-    vita2d_draw_rectangle(x, pin_y, pin_digit_width, pin_digit_height, UI_COLOR_SURFACE);
+    vita2d_draw_rectangle(x, pin_y, pin_digit_width, pin_digit_height, UI_COLOR_CARD_BG);
     // Box border
     vita2d_draw_rectangle(x, pin_y, pin_digit_width, 2, box_color);
     vita2d_draw_rectangle(x, pin_y + pin_digit_height - 2, pin_digit_width, 2, box_color);
