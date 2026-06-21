@@ -46,9 +46,9 @@ static void config_set_defaults(VitaChiakiConfig *cfg, bool circle_btn_confirm_d
     controller_map_storage_set_defaults(&cfg->custom_maps[i]);
     cfg->custom_maps_valid[i] = false;
   }
-  cfg->show_latency = false;
   cfg->show_network_indicator = true;
   cfg->show_stream_exit_hint = true;
+  cfg->show_latency = true;  // Enable for PIN submission diagnostics
   cfg->latency_mode = VITA_LATENCY_MODE_BALANCED;
   cfg->stretch_video = false;
   cfg->force_30fps = false;

@@ -139,6 +139,16 @@ void host_submit_login_pin(void) {
   uint64_t time_after = sceKernelGetProcessTimeCounter();
   LOGD("[TIMING] chiaki_session_set_login_pin returned (timestamp: %llu, delta: %llu)", time_after, time_after - time_before);
   
+  if (context.stream.session_init) {
+    uint32_t target_fps = context.stream.target_fps ? context.stream.target_fps : context.stream.negotiated_fps;
+    float target_mbps = context.stream.session.connect_info.video_profile.bitrate / 1000.0f;
+    LOGD("[PIN_SUBMIT_METRICS] RTT=%u ms, Bitrate=%.2f/%.2f Mbps, FPS=%u/%u, WiFi_RSSI=%d",
+         context.stream.measured_rtt_ms,
+         context.stream.measured_bitrate_mbps, target_mbps,
+         context.stream.measured_incoming_fps, target_fps,
+         context.stream.wifi_rssi);
+  }
+  
   if (err != CHIAKI_ERR_SUCCESS) {
     LOGE("Failed to set login PIN: %s", chiaki_error_string(err));
   }
