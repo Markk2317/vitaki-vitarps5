@@ -12,6 +12,76 @@
 #define AV_DIAG_LOG_INTERVAL_US (5 * 1000 * 1000ULL)
 #define AV_DIAG_STALE_SNAPSHOT_WARN_STREAK 5
 
+/* First-level bitrate trigger: if measured bitrate stays below threshold for N seconds,
+   request a reconnect at reduced bitrate to activate post-reconnect recovery logic. */
+#define FIRST_LEVEL_BITRATE_TRIGGER_MBPS 1.5f
+#define FIRST_LEVEL_BITRATE_WINDOW_S 30
+#define FIRST_LEVEL_BITRATE_RECONNECT_KBPS 1500
+
+/**
+ * Check if measured bitrate is stuck below threshold and trigger reconnect if needed.
+ * This is a first-level trigger that activates the post-reconnect recovery state machine.
+ * 
+ * The trigger fires when:
+ * - Measured bitrate stays below FIRST_LEVEL_BITRATE_TRIGGER_MBPS for FIRST_LEVEL_BITRATE_WINDOW_S seconds
+ * - No reconnect is already active
+ * - Cooldown from previous recovery action has elapsed
+ * 
+ * When triggered, requests a stream restart at FIRST_LEVEL_BITRATE_RECONNECT_KBPS,
+ * which activates post-reconnect recovery logic that can further reduce bitrate if needed.
+ */
+static void host_metrics_check_first_level_bitrate_trigger(uint64_t now_us) {
+  // Skip if already in recovery or fast restart
+  if (context.stream.reconnect.recover_active || context.stream.fast_restart_active)
+    return;
+
+  // Skip if cooldown from last recovery action is still active
+  if (context.stream.last_loss_recovery_action_us &&
+      now_us - context.stream.last_loss_recovery_action_us < (10 * 1000 * 1000ULL)) {
+    return;
+  }
+
+  // Check if bitrate is below threshold
+  if (context.stream.measured_bitrate_mbps >= FIRST_LEVEL_BITRATE_TRIGGER_MBPS)
+    return;
+
+  // Initialize or update low-bitrate window
+  static uint64_t low_bitrate_window_start_us = 0;
+  static bool low_bitrate_active = false;
+
+  if (!low_bitrate_active) {
+    // Bitrate just dropped below threshold
+    low_bitrate_window_start_us = now_us;
+    low_bitrate_active = true;
+    return;  // Need to wait for full window duration
+  }
+
+  // Check if we've been below threshold for long enough
+  uint64_t window_duration_us = now_us - low_bitrate_window_start_us;
+  uint64_t window_duration_s = window_duration_us / 1000000ULL;
+
+  if (window_duration_s >= FIRST_LEVEL_BITRATE_WINDOW_S) {
+    // Trigger reconnect at reduced bitrate
+    LOGD("PIPE/BITRATE_TRIGGER action=first_level bitrate=%.1f target_mbps=%.2f window_s=%lu",
+         FIRST_LEVEL_BITRATE_RECONNECT_KBPS / 1000.0f, context.stream.measured_bitrate_mbps,
+         (unsigned long)window_duration_s);
+
+    bool restart_ok = request_stream_restart_coordinated("first_level_bitrate",
+                                                         FIRST_LEVEL_BITRATE_RECONNECT_KBPS, now_us);
+    if (restart_ok) {
+      context.stream.last_loss_recovery_action_us = now_us;
+      LOGD("PIPE/BITRATE_TRIGGER action=restart_requested bitrate=%u kbps",
+           FIRST_LEVEL_BITRATE_RECONNECT_KBPS);
+    } else {
+      LOGE("PIPE/BITRATE_TRIGGER action=restart_failed");
+    }
+
+    // Reset window for next potential trigger
+    low_bitrate_window_start_us = 0;
+    low_bitrate_active = false;
+  }
+}
+
 void host_metrics_reset_stream(bool preserve_recovery_state) {
   context.stream.measured_bitrate_mbps = 0.0f;
   context.stream.measured_rtt_ms = 0;
@@ -306,6 +376,9 @@ void host_metrics_update_latency(void) {
     host_recovery_handle_post_reconnect_degraded_mode(av_diag_progressed, incoming_fps,
                                                       effective_target_fps, low_fps_window, now_us);
     // Keep diagnostics passive here; stability path avoids restart escalation.
+
+    // First-level bitrate trigger: if bitrate stays low for 30 seconds, activate recovery
+    host_metrics_check_first_level_bitrate_trigger(now_us);
   }
 
   if (!context.config.show_latency)
