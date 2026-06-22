@@ -51,14 +51,23 @@ static void host_metrics_check_first_level_bitrate_trigger(uint64_t now_us) {
   }
 
   // Check if bitrate is below threshold
-  if (context.stream.measured_bitrate_mbps >= FIRST_LEVEL_BITRATE_TRIGGER_MBPS)
+  if (context.stream.measured_bitrate_mbps >= FIRST_LEVEL_BITRATE_TRIGGER_MBPS) {
+    // Bitrate recovered above threshold — reset window for consecutive requirement
+    if (low_bitrate_active) {
+      LOGD("BITRATE_TRIGGER reset: bitrate recovered to %.2f Mbps", context.stream.measured_bitrate_mbps);
+      low_bitrate_window_start_us = 0;
+      low_bitrate_active = false;
+    }
     return;
+  }
 
   // Initialize or update low-bitrate window
   if (!low_bitrate_active) {
     // Bitrate just dropped below threshold
     low_bitrate_window_start_us = now_us;
     low_bitrate_active = true;
+    LOGD("BITRATE_TRIGGER window_start: bitrate=%.2f Mbps, will check after %u seconds",
+         context.stream.measured_bitrate_mbps, FIRST_LEVEL_BITRATE_WINDOW_S);
     return;  // Need to wait for full window duration
   }
 
