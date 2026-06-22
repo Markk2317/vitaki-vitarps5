@@ -31,6 +31,15 @@
  * which activates post-reconnect recovery logic that can further reduce bitrate if needed.
  */
 static void host_metrics_check_first_level_bitrate_trigger(uint64_t now_us) {
+  // Debug: log every call to understand execution pattern
+  static uint64_t low_bitrate_window_start_us = 0;
+  static bool low_bitrate_active = false;
+  LOGD("BITRATE_TRIGGER check: mbps=%.2f active=%d window_start=%lu now=%lu",
+       context.stream.measured_bitrate_mbps,
+       (int)low_bitrate_active,
+       (unsigned long)low_bitrate_window_start_us,
+       (unsigned long)now_us);
+
   // Skip if already in recovery or fast restart
   if (context.stream.reconnect.recover_active || context.stream.fast_restart_active)
     return;
@@ -46,9 +55,6 @@ static void host_metrics_check_first_level_bitrate_trigger(uint64_t now_us) {
     return;
 
   // Initialize or update low-bitrate window
-  static uint64_t low_bitrate_window_start_us = 0;
-  static bool low_bitrate_active = false;
-
   if (!low_bitrate_active) {
     // Bitrate just dropped below threshold
     low_bitrate_window_start_us = now_us;
