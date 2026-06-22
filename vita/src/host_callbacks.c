@@ -18,7 +18,7 @@
  */
 static void host_handle_login_pin_request(ChiakiEvent *event) {
   bool pin_incorrect = event->login_pin_request.pin_incorrect;
-  uint64_t event_time = sceKernelGetProcessTimeCounter();
+  uint64_t event_time = sceKernelGetProcessTimeWide();
   
   LOGD("[TIMING] LOGIN_PIN_REQUEST event received (timestamp: %llu, incorrect=%s)", event_time, pin_incorrect ? "true" : "false");
   
@@ -131,12 +131,12 @@ void host_submit_login_pin(void) {
   LOGD("Submitting PIN to console (bytes: %02x %02x %02x %02x)",
        pin_bytes[0], pin_bytes[1], pin_bytes[2], pin_bytes[3]);
   
-  uint64_t time_before = sceKernelGetProcessTimeCounter();
+  uint64_t time_before = sceKernelGetProcessTimeWide();
   LOGD("[TIMING] About to call chiaki_session_set_login_pin (timestamp: %llu)", time_before);
   
   ChiakiErrorCode err = chiaki_session_set_login_pin(&context.stream.session, pin_bytes, 4);
   
-  uint64_t time_after = sceKernelGetProcessTimeCounter();
+  uint64_t time_after = sceKernelGetProcessTimeWide();
   LOGD("[TIMING] chiaki_session_set_login_pin returned (timestamp: %llu, delta: %llu)", time_after, time_after - time_before);
   
   if (context.stream.session_init) {
